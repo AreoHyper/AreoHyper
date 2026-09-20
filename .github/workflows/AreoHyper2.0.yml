@@ -29,14 +29,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y erofs-utils wget tar unzip android-sdk-libsparse-utils default-jdk python3 zip
           
-          echo "📥 Downloading Partition Tools..."
-          wget --show-progress -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack
+          echo "📥 Downloading Partition Tools (with fallbacks)..."
+          wget --show-progress -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack || wget --show-progress -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
           wget --show-progress -O lpmake https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpmake || wget --show-progress -O lpmake https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpmake
           chmod +x lpunpack lpmake
           sudo mv lpunpack lpmake /usr/local/bin/
           
-          echo "📥 Downloading AVBTool..."
-          wget --show-progress -O avbtool https://raw.githubusercontent.com/aosp-mirror/platform_external_avb/master/avbtool.py
+          echo "📥 Downloading AVBTool (with fallbacks)..."
+          wget --show-progress -O avbtool https://raw.githubusercontent.com/aosp-mirror/platform_external_avb/main/avbtool || \
+          wget --show-progress -O avbtool https://raw.githubusercontent.com/LineageOS/android_external_avb/lineage-21.0/avbtool.py || \
+          wget --show-progress -O avbtool https://raw.githubusercontent.com/cfig/Android_boot_image_editor/master/avb/avbtool
           chmod +x avbtool
           sudo mv avbtool /usr/local/bin/
           
@@ -197,7 +199,7 @@ jobs:
 
       - name: "🛡️ Generate AVB Neutralized VBMeta"
         run: |
-          avbtool make_vbmeta_image --flags 3 --padding_size 4096 --output package_root/firmware-update/vbmeta.img
+          python3 avbtool make_vbmeta_image --flags 3 --padding_size 4096 --output package_root/firmware-update/vbmeta.img
           cp package_root/firmware-update/vbmeta.img package_root/firmware-update/vbmeta_system.img
           cp package_root/firmware-update/vbmeta.img package_root/firmware-update/vbmeta_vendor.img
 
