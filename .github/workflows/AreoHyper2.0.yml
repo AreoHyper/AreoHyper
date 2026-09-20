@@ -43,7 +43,6 @@ jobs:
           
           IMAGES_DIR=$(find stock_extracted -type d -name "images" | head -1)
           
-          # Notice init_boot.img is completely removed from extraction
           for img in boot.img vendor_boot.img dtbo.img vbmeta.img; do
             cp -f "$IMAGES_DIR/$img" package_root/firmware-update/ 2>/dev/null || true
           done
@@ -129,7 +128,6 @@ jobs:
             sudo cp mods/HyperBridge.apk tree/product/priv-app/HyperBridge/HyperBridge.apk
             sudo chmod 644 tree/product/priv-app/HyperBridge/HyperBridge.apk
             
-            # Prevent SELinux Crash for injected folder
             if [ -f "tree/product/product_file_contexts" ]; then
               echo "/product/priv-app/HyperBridge(/.*)? u:object_r:system_file:s0" | sudo tee -a tree/product/product_file_contexts
             fi
@@ -161,35 +159,47 @@ jobs:
 
       - name: "✨ Native XML Injector & Target Spoofing"
         run: |
-          AIR_XML=$(sudo find tree/product tree/system -iname "air.xml" 2>/dev/null | head -1)
-          if [ -n "$AIR_XML" ]; then
-            # Clean existing conflicting flags
-            for flag in support_window_blur support_new_control_center is_screenshot_frame_supported \
-                        is_hongmi support_sound_assist support_app_hiding is_support_partial_screenshot \
-                        support_local_ocr gallery_support_analytic_face_and_scene support_wild_boost \
-                        support_displayfeature_gamemode is_support_video_tool_box enable_miui_lite; do
-              sudo sed -i "/$flag/d" "$AIR_XML"
-            done
-
-            # Inject curated flagship features safely
-            sudo sed -i 's/<\/features>/    <!-- AeroHyper Curated Flagship Unlocks -->\n\
-    <bool name="support_window_blur">true<\/bool>\n\
-    <bool name="support_new_control_center">true<\/bool>\n\
-    <bool name="is_screenshot_frame_supported">true<\/bool>\n\
-    <bool name="is_hongmi">false<\/bool>\n\
-    <bool name="enable_miui_lite">false<\/bool>\n\
-    <bool name="support_sound_assist">true<\/bool>\n\
-    <bool name="support_app_hiding">true<\/bool>\n\
-    <bool name="is_support_partial_screenshot">true<\/bool>\n\
-    <bool name="support_local_ocr">true<\/bool>\n\
-    <bool name="gallery_support_analytic_face_and_scene">true<\/bool>\n\
-    <bool name="support_wild_boost">true<\/bool>\n\
-    <bool name="support_displayfeature_gamemode">true<\/bool>\n\
-    <bool name="is_support_video_tool_box">true<\/bool>\n\
-<\/features>/g' "$AIR_XML"
-          fi
+          sudo python3 - << 'EOF'
+          import os, glob
           
-          # POCO F5 Spoofing
+          # 1. Find and update air.xml safely using Python
+          xml_files = glob.glob("tree/**/air.xml", recursive=True)
+          flags_to_inject = {
+              "support_window_blur": "true",
+              "support_new_control_center": "true",
+              "is_screenshot_frame_supported": "true",
+              "is_hongmi": "false",
+              "enable_miui_lite": "false",
+              "support_sound_assist": "true",
+              "support_app_hiding": "true",
+              "is_support_partial_screenshot": "true",
+              "support_local_ocr": "true",
+              "gallery_support_analytic_face_and_scene": "true",
+              "support_wild_boost": "true",
+              "support_displayfeature_gamemode": "true",
+              "is_support_video_tool_box": "true"
+          }
+          
+          for xml_path in xml_files:
+              with open(xml_path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              
+              for flag in flags_to_inject:
+                  content = re.sub(rf'<bool name="{flag}">.*?</bool>', '', content)
+                  content = re.sub(rf'<bool name="{flag}"\s*/>', '', content)
+              
+              injection = ""
+              for flag, val in flags_to_inject.items():
+                  injection += f'    <bool name="{flag}">{val}</bool>\n'
+              
+              if "</features>" in content:
+                  content = content.replace("</features>", injection + "</features>")
+                  with open(xml_path, "w", encoding="utf-8") as f:
+                      f.write(content)
+                  print(f"Successfully patched {xml_path}")
+          EOF
+          
+          # 2. POCO F5 Spoofing
           for prop in tree/product/etc/build.prop tree/system/system/build.prop tree/system_ext/etc/build.prop; do
             if [ -f "$prop" ]; then
               sudo sed -i 's/ro.product.model=.*/ro.product.model=23049PCD8G/g' "$prop"
@@ -211,7 +221,6 @@ jobs:
           EOF
           sudo chmod 644 "$PIXEL_XML"
           
-          # Watermark
           sudo sed -i '$ a ro.aero.watermark=AeroHyper_Project' tree/system/system/build.prop
 
       - name: "💾 Compile EROFS & Flawless LP Metadata Super Repack"
@@ -360,6 +369,7 @@ jobs:
             *   **AVB Chain Neutralized:** `vbmeta_system` and `vbmeta_vendor` bootloops permanently fixed.
             *   **SELinux Contexts Enforced:** Eliminates "unlabeled" app injection crashes.
             *   **Targeted 90 FPS Gaming Spoofing:** Spoofs UI model to unlock high FPS targets safely.
+            *   **Unlimited Google Photos:** Pixel sysconfig XML injected.
             *   **Real-Time Control Center Blur:** Native Gaussian blur forced via XML injection.
             *   **HyperBridge Integration:** A15-compatible notification pill natively integrated.
             *   **Flagship Device Frames:** Safely unlocked via native XML override to prevent API crashes.
