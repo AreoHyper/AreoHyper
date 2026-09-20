@@ -29,16 +29,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y erofs-utils wget tar unzip android-sdk-libsparse-utils default-jdk python3 zip
           
-          BASE_URL="https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary"
-          wget -q $BASE_URL/lpunpack -O lpunpack
-          wget -q $BASE_URL/lpmake -O lpmake
+          echo "📥 Downloading Partition Tools..."
+          wget --show-progress -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack
+          wget --show-progress -O lpmake https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpmake || wget --show-progress -O lpmake https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpmake
           chmod +x lpunpack lpmake
           sudo mv lpunpack lpmake /usr/local/bin/
           
-          curl -sLo avbtool https://raw.githubusercontent.com/LineageOS/android_external_avb/lineage-21.0/avbtool.py
+          echo "📥 Downloading AVBTool..."
+          wget --show-progress -O avbtool https://raw.githubusercontent.com/aosp-mirror/platform_external_avb/master/avbtool.py
           chmod +x avbtool
-          wget -q https://github.com/JesusFreke/smali/releases/download/v3.0.3/baksmali-3.0.3.jar -O baksmali.jar
-          wget -q https://github.com/JesusFreke/smali/releases/download/v3.0.3/smali-3.0.3.jar -O smali.jar
+          sudo mv avbtool /usr/local/bin/
+          
+          echo "📥 Downloading Core Patch Toolchain (Smali v2.5.2)..."
+          wget --show-progress -O baksmali.jar https://github.com/JesusFreke/smali/releases/download/v2.5.2/baksmali-2.5.2.jar
+          wget --show-progress -O smali.jar https://github.com/JesusFreke/smali/releases/download/v2.5.2/smali-2.5.2.jar
 
       - name: "📥 Extract Stock Fastboot ROM & Firmwares"
         run: |
@@ -193,7 +197,7 @@ jobs:
 
       - name: "🛡️ Generate AVB Neutralized VBMeta"
         run: |
-          python3 avbtool make_vbmeta_image --flags 3 --padding_size 4096 --output package_root/firmware-update/vbmeta.img
+          avbtool make_vbmeta_image --flags 3 --padding_size 4096 --output package_root/firmware-update/vbmeta.img
           cp package_root/firmware-update/vbmeta.img package_root/firmware-update/vbmeta_system.img
           cp package_root/firmware-update/vbmeta.img package_root/firmware-update/vbmeta_vendor.img
 
@@ -355,22 +359,22 @@ jobs:
             *   **Real-Time Control Center Blur:** Native Gaussian blur forced via `air.xml` reconfiguration.
             *   **Advanced System Animations:** `is_low_end_device` constraints bypassed to unlock fluid transitions.
             *   **Zero Background Throttling:** Global removal of `ro.config.low_ram` properties.
-            *   **Signature Bypass (Core Patch):** Multi-dex patched `services.jar` for unsigned application support (No Magisk/Xposed required).
+            *   **Signature Bypass (Core Patch):** Multi-dex patched `services.jar` for unsigned application support.
             *   **Neutralized AVB 2.0:** Pre-patched VBMeta images with hash verification permanently disabled.
             
             ### 🎮 Gaming & Exclusive Perks
             *   **POCO F5 Spoofing:** System model spoofed to `marble` to unlock native **90 FPS in BGMI / PUBG Mobile**.
-            *   **Camera Protection:** Proprietary MediaTek vendor trees remain fully intact to prevent hardware HAL crashes.
+            *   **Camera Protection:** Proprietary MediaTek vendor trees remain fully intact.
             *   **Unlimited Google Photos:** Pixel 8 Pro sysconfig injected for original-quality cloud storage.
             
             ### ⚡ Integrated Custom Modules
             *   **HyperOS Launcher:** Flagship recents provider and fluidity patch.
             *   **HyperOS Security Center:** Unlocked performance and Game Turbo tiers.
-            *   **HyperOS Theme Manager:** Unrestricted 3rd-party theme, font, and icon importing.
+            *   **HyperOS Theme Manager:** Unrestricted 3rd-party theme importing.
             *   **Advanced AOD:** Flagship lock screen clock styles unlocked.
             
             ### 🧹 Debloat Protocol
-            *   Completely purged Xiaomi tracking (`MSA-Global`, `AnalyticsCore`, `MiBugReport`).
+            *   Purged Xiaomi tracking (`MSA-Global`, `AnalyticsCore`, `MiBugReport`).
             *   Stripped third-party bloat (Facebook installers, factory test APKs).
             *   Precompiled ART bytecaches cleanly wiped to ensure zero boot errors.
             
@@ -379,7 +383,7 @@ jobs:
             2. Reboot your device to Fastboot mode (Hold `Volume Down + Power`).
             3. Connect via USB and double-click `windows_fastboot_install.bat`.
             4. Wait for the terminal to print complete and let the phone boot up. 
-            > ⚠️ **Note:** A clean flash wipes internal storage. Backup all data beforehand. Your engineering preloader is strictly protected.
+            > ⚠️ **Note:** A clean flash wipes internal storage. Backup all data beforehand. Your engineering preloader is protected.
             
             ---
             *Maintained by the Open Source Android Modding Community.*
