@@ -58,7 +58,7 @@ jobs:
           echo "Files unpacked from artifact:"
           ls -lh extracted_package/
 
-      - name: "📂 Extract Super Partition & Logical Trees"
+            - name: "📂 Extract Super Partition & Logical Trees"
         run: |
           mkdir -p super_unpacked audit_tree/product audit_tree/system audit_tree/system_ext audit_tree/mi_ext
           
@@ -68,8 +68,17 @@ jobs:
             exit 1
           fi
           
+          echo "Checking if super.img is sparse..."
+          if file "$SUPER" | grep -qi "sparse"; then
+            echo "Converting sparse super.img to raw super.img..."
+            simg2img "$SUPER" super_raw.img
+            SUPER_TARGET="super_raw.img"
+          else
+            SUPER_TARGET="$SUPER"
+          fi
+          
           echo "Unpacking super.img..."
-          lpunpack "$SUPER" super_unpacked
+          lpunpack "$SUPER_TARGET" super_unpacked
           
           for part in system system_ext product mi_ext; do
             IMG=$(find super_unpacked -iname "${part}_a.img" | head -1)
@@ -78,6 +87,7 @@ jobs:
               sudo fsck.erofs --extract="audit_tree/$part" "$IMG"
             fi
           done
+
 
       - name: "🔍 Run Full Forensic ROM Audit"
         run: |
