@@ -58,7 +58,7 @@ jobs:
           echo "Files unpacked from artifact:"
           ls -lh extracted_package/
 
-            - name: "📂 Extract Super Partition & Logical Trees"
+      - name: "📂 Extract Super Partition & Logical Trees"
         run: |
           mkdir -p super_unpacked audit_tree/product audit_tree/system audit_tree/system_ext audit_tree/mi_ext
           
@@ -87,7 +87,6 @@ jobs:
               sudo fsck.erofs --extract="audit_tree/$part" "$IMG"
             fi
           done
-
 
       - name: "🔍 Run Full Forensic ROM Audit"
         run: |
