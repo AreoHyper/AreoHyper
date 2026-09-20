@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  ROM_DOWNLOAD_URL: "https://store-eu-par-7.gofile.io/download/web/ed3343bd-97db-471d-92a4-203e3982b925/AeroHyper_2.0_Air_Fastboot.zip"
+  ROM_DOWNLOAD_PAGE: "https://store-eu-par-7.gofile.io/download/web/ed3343bd-97db-471d-92a4-203e3982b925/AeroHyper_2.0_Air_Fastboot.zip"
 
 jobs:
   audit_rom:
@@ -18,14 +18,29 @@ jobs:
           sudo apt-get install -y erofs-utils wget tar unzip android-sdk-libsparse-utils python3 zip jq curl
           
           echo "📥 Downloading Partition Unpacking Tools..."
-          wget -q -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack || wget -q -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
+          wget -q -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack || wget -q -O lpunpack https://raw.githubusercontent.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
           chmod +x lpunpack
           sudo mv lpunpack /usr/local/bin/
 
       - name: "📥 Download Compiled ROM from GoFile"
         run: |
-          echo "Downloading ROM package from GoFile..."
-          wget -q -O AeroHyper_ROM.zip "$ROM_DOWNLOAD_URL"
+          echo "Resolving direct download link from GoFile..."
+          FILE_ID="ed3343bd-97db-471d-92a4-203e3982b925"
+          
+          # Fetch the direct content JSON from GoFile API
+          API_RES=$(curl -s "https://api.gofile.io/contents/$FILE_ID?wt=4ifgehK4FEgt8reW")
+          DIRECT_URL=$(echo "$API_RES" | jq -r '.data.children[] | select(.type=="file") | .link')
+          
+          if [ -z "$DIRECT_URL" ] || [ "$DIRECT_URL" = "null" ]; then
+            echo "⚠️ Direct API link not found, falling back to direct wget..."
+            DIRECT_URL="$ROM_DOWNLOAD_PAGE"
+          fi
+          
+          echo "Downloading archive binary..."
+          wget -q -O AeroHyper_ROM.zip "$DIRECT_URL"
+          
+          echo "Verifying file structure..."
+          file AeroHyper_ROM.zip
           mkdir -p extracted_rom
           unzip -q AeroHyper_ROM.zip -d extracted_rom
 
@@ -142,17 +157,18 @@ jobs:
               errors += 1
               
           # 6. Verify Hardware Identity Protection (Air CodeName)
-          print("\n[+] Checking Hardware Safety (Camera & Thermal Protection)...
+          print("\n[+] Checking Hardware Safety (Camera & Thermal Protection)...")
           hardware_safe = True
-          for root, dirs, files in os.walk("audit_tree/vendor"):
+          for root, dirs, files in os.walk("audit_tree"):
               if "build.prop" in files:
                   with open(os.path.join(root, "build.prop"), "r", errors="ignore") as f:
-                      if "ro.product.vendor.device=marble" in f.read() or "ro.hardware=marble" in f.read():
+                      prop_content = f.read()
+                      if "ro.product.vendor.device=marble" in prop_content or "ro.hardware=marble" in prop_content:
                           hardware_safe = False
           if hardware_safe:
-              print("  [PASS] Vendor/Hardware identity safely preserved as 'air' (Camera HALs protected).")
+              print("  [PASS] Hardware identity safely preserved as 'air' (Camera HALs protected).")
           else:
-              print("  [FAIL] Unsafe global hardware spoof detected in vendor properties!")
+              print("  [FAIL] Unsafe global hardware spoof detected in properties!")
               errors += 1
               
           # 7. Verify Project Watermark
