@@ -236,7 +236,8 @@ jobs:
           for img_path in super_unpacked/*_a.img; do
             filename=$(basename "$img_path")
             part_name="${filename%.img}"
-            if [ -f "output/${part_name\%_a}.img" ]; then src_img="output/${part_name%_a}.img"
+            base_name="${part_name%_a}"
+            if [ -f "output/${base_name}.img" ]; then src_img="output/${base_name}.img"
             else src_img="$img_path"; fi
             size=$(stat -c\%s "$src_img")
             TOTAL_SIZE=$((TOTAL_SIZE + size))
