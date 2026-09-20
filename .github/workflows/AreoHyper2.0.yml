@@ -146,12 +146,16 @@ jobs:
 
       - name: "✨ UI Flags & Targeted Hardware-Safe Spoofing"
         run: |
+          # 1. Force-Inject UI Flags into air.xml
           AIR_XML=$(sudo find tree/product -iname "air.xml" 2>/dev/null | head -1)
           if [ -n "$AIR_XML" ]; then
-            sudo sed -i 's/<bool name="support_window_blur">false<\/bool>/<bool name="support_window_blur">true<\/bool>/g' "$AIR_XML"
-            sudo sed -i 's/<bool name="support_new_control_center">false<\/bool>/<bool name="support_new_control_center">true<\/bool>/g' "$AIR_XML"
+            sudo sed -i '/support_window_blur/d' "$AIR_XML"
+            sudo sed -i '/support_new_control_center/d' "$AIR_XML"
+            sudo sed -i 's/<\/features>/    <bool name="support_window_blur">true<\/bool>\n    <bool name="support_new_control_center">true<\/bool>\n<\/features>/g' "$AIR_XML"
+            echo "Successfully forcefully injected Window Blur and Control Center flags into air.xml!"
           fi
           
+          # 2. Gaming Spoofing (POCO F5)
           for prop in tree/product/etc/build.prop tree/system/system/build.prop tree/system_ext/etc/build.prop; do
             if [ -f "$prop" ]; then
               sudo sed -i 's/ro.product.model=.*/ro.product.model=23049PCD8G/g' "$prop"
@@ -160,6 +164,7 @@ jobs:
             fi
           done
 
+          # 3. Pixel Unlimited Photos
           PIXEL_XML="tree/product/etc/sysconfig/pixel_unlimited.xml"
           sudo mkdir -p tree/product/etc/sysconfig
           sudo bash -c "cat > $PIXEL_XML" << 'EOF'
@@ -172,6 +177,7 @@ jobs:
           EOF
           sudo chmod 644 "$PIXEL_XML"
           
+          # 4. Project Watermark
           sudo sed -i '$ a ro.aero.watermark=AeroHyper_Project' tree/system/system/build.prop
 
       - name: "💾 Compile EROFS & Flawless LP Metadata Super Repack"
@@ -309,6 +315,7 @@ jobs:
         with:
           name: AeroHyper-2.0-Fastboot-ROM
           path: AeroHyper_2.0_Air_Fastboot.zip
+          retention-days: 90
           compression-level: 0
 
       - name: "🚀 Push Notes & Links to GitHub Releases"
@@ -327,7 +334,7 @@ jobs:
             ### ✨ Features
             *   **Targeted 90 FPS Gaming Spoofing:** Spoofs UI model to unlock high FPS targets while safely keeping the core `air` camera HALs and thermal drivers perfectly intact.
             *   **Unlimited Google Photos:** Pixel sysconfig XML injected.
-            *   **Real-Time Control Center Blur:** Native Gaussian blur forced via `air.xml`.
+            *   **Real-Time Control Center Blur:** Native Gaussian blur forced via XML injection.
             *   **Kashi Modules Injected:** Launcher, Security, AOD, and Theme Manager fully pre-installed with clean ART caches.
             *   **Isolated Signature Bypass:** Native `services.jar` bytecode patched to bypass `compareSignatures`, ensuring seamless installation of modded system apps.
             *   **Automated Clean Flash:** The installation batch file automatically wipes `userdata` and `metadata` to prevent dirty-flash bootloops.
