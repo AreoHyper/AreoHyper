@@ -124,7 +124,7 @@ jobs:
             sudo chmod 644 tree/product/app/MIUIThemeManagerGlobal/lib/arm64/*.so 2>/dev/null || true
           fi
           
-          VAULT_TARGET=$(find tree/mi_ext -iname "*MinusScreen*" -o -iname "*AppVault*" -type d | head -1)
+          VAULT_TARGET=$(find tree/mi_ext -iname "*MinusScreen*" -o -iname "*AppVault*" -type d 2>/dev/null | head -1)
           if [ -n "$VAULT_TARGET" ]; then
             sudo cp mods_extracted/vault/files/AppVault.apk "$VAULT_TARGET/$(basename "$VAULT_TARGET").apk"
             sudo rm -rf "$VAULT_TARGET/oat" "$VAULT_TARGET/arm64" 2>/dev/null || true
@@ -161,14 +161,14 @@ jobs:
 
       - name: "✨ Force Enable HyperOS 2 Blur & Animation Engines"
         run: |
-          AIR_XML=$(find tree/product -iname "air.xml" | head -1)
+          AIR_XML=$(sudo find tree/product -iname "air.xml" 2>/dev/null | head -1)
           if [ -n "$AIR_XML" ]; then
             sudo sed -i 's/<bool name="support_window_blur">false<\/bool>/<bool name="support_window_blur">true<\/bool>/g' "$AIR_XML"
             sudo sed -i 's/<bool name="support_new_control_center">false<\/bool>/<bool name="support_new_control_center">true<\/bool>/g' "$AIR_XML"
             sudo sed -i 's/<bool name="is_low_end_device">true<\/bool>/<bool name="is_low_end_device">false<\/bool>/g' "$AIR_XML"
           fi
-          find tree -iname "*build.prop" -not -path "*/vendor/*" -exec sudo sed -i 's/ro.config.low_ram=true/ro.config.low_ram=false/g' {} +
-          find tree -iname "*build.prop" -not -path "*/vendor/*" -exec sudo sed -i 's/ro.config.low_ram.threshold_gb=99/ro.config.low_ram.threshold_gb=0/g' {} +
+          sudo find tree -iname "*build.prop" -not -path "*/vendor/*" -exec sudo sed -i 's/ro.config.low_ram=true/ro.config.low_ram=false/g' {} +
+          sudo find tree -iname "*build.prop" -not -path "*/vendor/*" -exec sudo sed -i 's/ro.config.low_ram.threshold_gb=99/ro.config.low_ram.threshold_gb=0/g' {} +
 
       - name: "🎭 Device Spoofing (POCO F5 90 FPS + Pixel Photos)"
         run: |
@@ -304,6 +304,7 @@ jobs:
           "%fastboot%" oem cdms
           echo ---------------------------------------------------
           echo Flash complete! Rebooting device...
+          echo ---------------------------------------------------
           "%fastboot%" reboot
           pause
           EOF
