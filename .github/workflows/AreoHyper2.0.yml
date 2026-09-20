@@ -42,9 +42,9 @@ jobs:
           chmod +x avbtool
           sudo mv avbtool /usr/local/bin/
           
-          echo "📥 Downloading Core Patch Toolchain (Smali v2.5.2)..."
-          wget --show-progress -O baksmali.jar https://github.com/JesusFreke/smali/releases/download/v2.5.2/baksmali-2.5.2.jar
-          wget --show-progress -O smali.jar https://github.com/JesusFreke/smali/releases/download/v2.5.2/smali-2.5.2.jar
+          echo "📥 Downloading Core Patch Toolchain (Smali v2.5.2 from Bitbucket)..."
+          wget --show-progress -O baksmali.jar https://bitbucket.org/JesusFreke/smali/downloads/baksmali-2.5.2.jar
+          wget --show-progress -O smali.jar https://bitbucket.org/JesusFreke/smali/downloads/smali-2.5.2.jar
 
       - name: "📥 Extract Stock Fastboot ROM & Firmwares"
         run: |
