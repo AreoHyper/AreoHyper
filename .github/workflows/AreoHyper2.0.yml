@@ -29,12 +29,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y erofs-utils wget tar unzip android-sdk-libsparse-utils default-jdk python3 zip
           
-          echo "📥 Downloading Partition Tools (lpunpack, lpmake, lpdump)..."
-          wget -q -O lpunpack https://raw.githubusercontent.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
-          wget -q -O lpmake https://raw.githubusercontent.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpmake
-          wget -q -O lpdump https://raw.githubusercontent.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpdump
-          chmod +x lpunpack lpmake lpdump
-          sudo mv lpunpack lpmake lpdump /usr/local/bin/
+          echo "📥 Downloading Partition Tools..."
+          wget -q -O lpunpack https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/Linux-debian/binary/lpunpack || wget -q -O lpunpack https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/main/binary/lpunpack
+          wget -q -O lpmake https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/Linux-debian/binary/lpmake || wget -q -O lpmake https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/main/binary/lpmake
+          chmod +x lpunpack lpmake
+          sudo mv lpunpack lpmake /usr/local/bin/
 
       - name: "📥 Extract Stock Fastboot ROM & Firmwares"
         run: |
@@ -58,7 +57,6 @@ jobs:
             SUPER_TARGET="$SUPER"
           fi
           
-          lpdump "$SUPER_TARGET" > lpdump_metadata.txt
           lpunpack "$SUPER_TARGET" super_unpacked
           
           mkdir -p tree/system tree/system_ext tree/product tree/vendor tree/mi_ext
@@ -122,7 +120,7 @@ jobs:
             purge_art "$VAULT_TARGET"
           fi
 
-      - name: "🔓 Core Signature Patch (Apktool Bypass)"
+      - name: "🔓 Core Signature Patch (Native Apktool)"
         run: |
           wget -q -O apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
           sudo java -jar apktool.jar d -q tree/system/system/framework/services.jar -o jar_workspace
@@ -176,7 +174,7 @@ jobs:
           
           sudo sed -i '$ a ro.aero.watermark=AeroHyper_Project' tree/system/system/build.prop
 
-      - name: "💾 Compile EROFS & Exact LP Metadata Super Repack"
+      - name: "💾 Compile EROFS & Flawless LP Metadata Super Repack"
         run: |
           mkdir -p output
           
@@ -191,28 +189,22 @@ jobs:
           sudo chown -R $USER:$USER output/
           
           sudo python3 - << 'EOF'
-          import os, re, shlex
+          import os, shlex
           
           super_size = os.path.getsize("super_raw.img")
           
-          with open("lpdump_metadata.txt", "r") as f:
-              dump = f.read()
-              
-          groups = {}
-          partitions = {}
+          with open("super_raw.img", "rb") as f:
+              header_data = f.read(1048576)
           
-          group_blocks = re.findall(r'Name:\s*([^\n]+)\n\s*Maximum size:\s*(\d+)', dump)
-          for name, max_size in group_blocks:
-              groups[name.strip()] = {"max_size": int(max_size), "new_sum": 0}
-              
-          part_blocks = re.finditer(r'Name:\s*([^\n]+)\n\s*Group:\s*([^\n]+)\n\s*Attributes:\s*([^\n]+)', dump)
-          for match in part_blocks:
-              p_name = match.group(1).strip()
-              p_group = match.group(2).strip()
-              p_attr = match.group(3).strip()
-              if "_b" in p_name: continue
-              partitions[p_name] = {"group": p_group, "attr": p_attr}
-              
+          # Native Group Detection
+          group_name = "main_a"
+          for known_group in [b"qti_dynamic_partitions_a", b"main_a", b"google_dynamic_partitions_a"]:
+              if known_group in header_data:
+                  group_name = known_group.decode()
+                  break
+                  
+          partitions = ["system_a", "system_ext_a", "product_a", "vendor_a", "odm_a", "mi_ext_a", "system_dlkm_a", "vendor_dlkm_a", "odm_dlkm_a"]
+          
           lpmake_cmd = [
               "lpmake",
               "--metadata-size", "65536",
@@ -221,20 +213,18 @@ jobs:
               "--device", f"super:{super_size}"
           ]
           
-          for p_name, data in partitions.items():
+          total_size = 0
+          for p_name in partitions:
               base_name = p_name.replace("_a", "")
               src_img = f"output/{base_name}.img" if os.path.exists(f"output/{base_name}.img") else f"super_unpacked/{p_name}.img"
                   
               if os.path.exists(src_img):
                   size = os.path.getsize(src_img)
-                  groups[data["group"]]["new_sum"] += size
-                  lpmake_cmd.extend(["--partition", f"{p_name}:{data['attr']}:{size}:{data['group']}", "--image", f"{p_name}={src_img}"])
+                  total_size += size
+                  lpmake_cmd.extend(["--partition", f"{p_name}:readonly:{size}:{group_name}", "--image", f"{p_name}={src_img}"])
           
-          for g_name, g_data in groups.items():
-              if "cow" in g_name: continue
-              final_size = g_data["max_size"] if g_data["max_size"] > g_data["new_sum"] else g_data["new_sum"] + 15728640
-              lpmake_cmd.extend(["--group", f"{g_name}:{final_size}"])
-              
+          group_size = total_size + 15728640 # Add 15MB headroom
+          lpmake_cmd.extend(["--group", f"{group_name}:{group_size}"])
           lpmake_cmd.extend(["--sparse", "--output", "package_root/firmware-update/super.img"])
           
           with open("repack.sh", "w") as f:
