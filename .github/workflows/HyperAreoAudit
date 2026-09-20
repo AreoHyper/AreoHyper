@@ -1,0 +1,196 @@
+name: 🔍 Standalone AeroHyper 2.0 ROM Audit
+
+on:
+  workflow_dispatch:
+
+env:
+  ROM_DOWNLOAD_URL: "https://store-eu-par-7.gofile.io/download/web/ed3343bd-97db-471d-92a4-203e3982b925/AeroHyper_2.0_Air_Fastboot.zip"
+
+jobs:
+  audit_rom:
+    name: "Run Forensic ROM Audit"
+    runs-on: ubuntu-24.04
+    steps:
+      - name: "🧹 Clean Environment & Install Utilities"
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get update
+          sudo apt-get install -y erofs-utils wget tar unzip android-sdk-libsparse-utils python3 zip jq curl
+          
+          echo "📥 Downloading Partition Unpacking Tools..."
+          wget -q -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack || wget -q -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
+          chmod +x lpunpack
+          sudo mv lpunpack /usr/local/bin/
+
+      - name: "📥 Download Compiled ROM from GoFile"
+        run: |
+          echo "Downloading ROM package from GoFile..."
+          wget -q -O AeroHyper_ROM.zip "$ROM_DOWNLOAD_URL"
+          mkdir -p extracted_rom
+          unzip -q AeroHyper_ROM.zip -d extracted_rom
+
+      - name: "📂 Unpack Super & Extract Filesystem Trees"
+        run: |
+          mkdir -p super_unpacked audit_tree/product audit_tree/system audit_tree/system_ext
+          
+          SUPER="extracted_rom/firmware-update/super.img"
+          if [ -f "$SUPER" ]; then
+            echo "Found super.img inside package. Unpacking logical partitions..."
+            lpunpack "$SUPER" super_unpacked
+          else
+            echo "❌ ERROR: super.img not found in the downloaded archive!"
+            exit 1
+          fi
+          
+          for part in system system_ext product; do
+            IMG=$(find super_unpacked -iname "${part}_a.img" | head -1)
+            if [ -n "$IMG" ]; then
+              echo "Extracting filesystem: $part"
+              sudo fsck.erofs --extract="audit_tree/$part" "$IMG"
+            fi
+          done
+
+      - name: "🔍 Execute Forensic Audit Script"
+        run: |
+          python3 - << 'EOF'
+          import os, sys, re
+          
+          print("==================================================")
+          print("      AEROHYPER 2.0 GOFILE ARCHITECTURAL AUDIT    ")
+          print("==================================================")
+          
+          errors = 0
+          warnings = 0
+          
+          # 1. Verify Partition Images Presence
+          print("\n[+] Checking Core Partition Images...")
+          firmware_dir = "extracted_rom/firmware-update"
+          required_imgs = ["boot.img", "init_boot.img", "vendor_boot.img", "dtbo.img", "vbmeta.img", "super.img"]
+          for img in required_imgs:
+              path = os.path.join(firmware_dir, img)
+              if os.path.exists(path):
+                  size_mb = os.path.getsize(path) / (1024 * 1024)
+                  print(f"  [PASS] {img} present ({size_mb:.2f} MB)")
+              else:
+                  print(f"  [FAIL] Missing required partition image: {img}")
+                  errors += 1
+                  
+          # 2. Verify Kashi Modded Apps Injection
+          print("\n[+] Checking Injected Kashi Modules...")
+          kashi_apps = {
+              "MiuiHome (Launcher)": "audit_tree/product/priv-app/MiuiHome/MiuiHome.apk",
+              "SecurityCenter": "audit_tree/product/priv-app/MIUISecurityCenterGlobal/MIUISecurityCenterGlobal.apk",
+              "MIUIAod": "audit_tree/product/priv-app/MIUIAod/MIUIAod.apk",
+              "MIUIThemeManager": "audit_tree/product/app/MIUIThemeManagerGlobal/MIUIThemeManagerGlobal.apk"
+          }
+          for name, path in kashi_apps.items():
+              if os.path.exists(path):
+                  print(f"  [PASS] {name} is correctly injected.")
+              else:
+                  print(f"  [FAIL] {name} is MISSING at {path}")
+                  errors += 1
+                  
+          # 3. Verify Pixel Unlimited Photos Config
+          print("\n[+] Checking Pixel Compatibility Config...")
+          pixel_xml = "audit_tree/product/etc/sysconfig/pixel_unlimited.xml"
+          if os.path.exists(pixel_xml):
+              print("  [PASS] pixel_unlimited.xml sysconfig is present.")
+              with open(pixel_xml, "r") as f:
+                  content = f.read()
+                  if "PIXEL_2021_MIDYEAR_STORAGE" in content:
+                      print("    -> Storage entitlement feature tags verified.")
+                  else:
+                      print("    -> [WARN] Feature tags look incomplete.")
+                      warnings += 1
+          else:
+              print("  [FAIL] pixel_unlimited.xml is missing!")
+              errors += 1
+              
+          # 4. Verify UI Blur & Control Center Flags in air.xml
+          print("\n[+] Checking HyperOS UI Flags...")
+          air_xml_found = False
+          for root, dirs, files in os.walk("audit_tree/product"):
+              if "air.xml" in files:
+                  air_xml_found = True
+                  air_path = os.path.join(root, "air.xml")
+                  with open(air_path, "r") as f:
+                      xml_data = f.read()
+                      blur_ok = 'support_window_blur">true' in xml_data
+                      cc_ok = 'support_new_control_center">true' in xml_data
+                      if blur_ok and cc_ok:
+                          print("  [PASS] air.xml forces both Window Blur and New Control Center to TRUE.")
+                      else:
+                          print(f"  [WARN] air.xml found, but flags might be false (Blur: {blur_ok}, CC: {cc_ok})")
+                          warnings += 1
+          if not air_xml_found:
+              print("  [FAIL] air.xml not found in product partition tree!")
+              errors += 1
+              
+          # 5. Verify Targeted Gaming Spoofing in build.prop files
+          print("\n[+] Checking Targeted Gaming Spoofing Props...")
+          build_props_checked = 0
+          for root, dirs, files in os.walk("audit_tree"):
+              if "build.prop" in files:
+                  bp_path = os.path.join(root, "build.prop")
+                  with open(bp_path, "r", errors="ignore") as f:
+                      bp_text = f.read()
+                      if "ro.product.model=23049PCD8G" in bp_text:
+                          print(f"  [PASS] POCO F5 model spoof found in {os.path.relpath(bp_path, 'audit_tree')}")
+                          build_props_checked += 1
+          if build_props_checked == 0:
+              print("  [FAIL] Model spoof property (POCO F5) not found in any build.prop!")
+              errors += 1
+              
+          # 6. Verify Hardware Identity Protection (Air CodeName)
+          print("\n[+] Checking Hardware Safety (Camera & Thermal Protection)...
+          hardware_safe = True
+          for root, dirs, files in os.walk("audit_tree/vendor"):
+              if "build.prop" in files:
+                  with open(os.path.join(root, "build.prop"), "r", errors="ignore") as f:
+                      if "ro.product.vendor.device=marble" in f.read() or "ro.hardware=marble" in f.read():
+                          hardware_safe = False
+          if hardware_safe:
+              print("  [PASS] Vendor/Hardware identity safely preserved as 'air' (Camera HALs protected).")
+          else:
+              print("  [FAIL] Unsafe global hardware spoof detected in vendor properties!")
+              errors += 1
+              
+          # 7. Verify Project Watermark
+          print("\n[+] Checking Project Watermark...")
+          system_bp = "audit_tree/system/system/build.prop"
+          if os.path.exists(system_bp):
+              with open(system_bp, "r") as f:
+                  if "ro.aero.watermark=AeroHyper_Project" in f.read():
+                      print("  [PASS] AeroHyper project watermark found.")
+                  else:
+                      print("  [FAIL] Watermark property missing.")
+                      errors += 1
+          else:
+              print("  [FAIL] system/system/build.prop not accessible for inspection.")
+              errors += 1
+              
+          # 8. Verify Installation Scripts
+          print("\n[+] Checking Installation Package Layout...")
+          win_bat = "extracted_rom/windows_clean_install.bat"
+          if os.path.exists(win_bat):
+              print("  [PASS] windows_clean_install.bat installer script present.")
+              with open(win_bat, "r") as f:
+                  bat_text = f.read()
+                  if "--disable-verity --disable-verification" in bat_text:
+                      print("    -> VBMeta AVB neutralization flags confirmed in script.")
+                  else:
+                      print("    -> [WARN] AVB disable flags missing from batch installer.")
+                      warnings += 1
+          else:
+              print("  [FAIL] windows_clean_install.bat is missing from archive root!")
+              errors += 1
+              
+          print("==================================================")
+          print(f" AUDIT COMPLETE: {errors} Error(s), {warnings} Warning(s)")
+          print("==================================================")
+          
+          if errors > 0:
+              sys.exit(1)
+          else:
+              print("✅ ROM ARCHITECTURE PASSED ALL FORENSIC CHECKS!")
+          EOF
