@@ -29,22 +29,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y erofs-utils wget tar unzip android-sdk-libsparse-utils default-jdk python3 zip
           
-          echo "📥 Downloading Partition Tools (with fallbacks)..."
-          wget --show-progress -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack || wget --show-progress -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
-          wget --show-progress -O lpmake https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpmake || wget --show-progress -O lpmake https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpmake
+          echo "📥 Downloading Partition Tools..."
+          wget -q -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack || wget -q -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
+          wget -q -O lpmake https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpmake || wget -q -O lpmake https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpmake
           chmod +x lpunpack lpmake
           sudo mv lpunpack lpmake /usr/local/bin/
           
-          echo "📥 Downloading AVBTool (with fallbacks)..."
-          wget --show-progress -O avbtool https://raw.githubusercontent.com/aosp-mirror/platform_external_avb/main/avbtool || \
-          wget --show-progress -O avbtool https://raw.githubusercontent.com/LineageOS/android_external_avb/lineage-21.0/avbtool.py || \
-          wget --show-progress -O avbtool https://raw.githubusercontent.com/cfig/Android_boot_image_editor/master/avb/avbtool
+          echo "📥 Downloading AVBTool..."
+          wget -q -O avbtool https://raw.githubusercontent.com/aosp-mirror/platform_external_avb/main/avbtool || wget -q -O avbtool https://raw.githubusercontent.com/LineageOS/android_external_avb/lineage-21.0/avbtool.py
           chmod +x avbtool
           sudo mv avbtool /usr/local/bin/
-          
-          echo "📥 Downloading Core Patch Toolchain (Smali v2.5.2 from Bitbucket)..."
-          wget --show-progress -O baksmali.jar https://bitbucket.org/JesusFreke/smali/downloads/baksmali-2.5.2.jar
-          wget --show-progress -O smali.jar https://bitbucket.org/JesusFreke/smali/downloads/smali-2.5.2.jar
 
       - name: "📥 Extract Stock Fastboot ROM & Firmwares"
         run: |
@@ -133,18 +127,19 @@ jobs:
             sudo rm -rf "$VAULT_TARGET/oat" "$VAULT_TARGET/arm64" 2>/dev/null || true
           fi
 
-      - name: "🔓 Multi-Dex Core Patch (services.jar Bypass)"
+      - name: "🔓 Multi-Dex Core Patch (Apktool Architecture)"
         run: |
-          mkdir -p jar_workspace
-          sudo cp tree/system/system/framework/services.jar jar_workspace/
-          cd jar_workspace
-          unzip -q services.jar
-          for dex in classes*.dex; do java -jar ../baksmali.jar d "$dex" -o "smali_${dex%.dex}"; done
+          echo "📥 Downloading Apktool (Official GitHub Release)..."
+          wget -q -O apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
           
+          echo "📦 Decompiling services.jar..."
+          java -jar apktool.jar d -q tree/system/system/framework/services.jar -o jar_workspace
+          
+          echo "⚙️ Injecting Signature Bypass Hook..."
           python3 - << 'EOF'
           import os, re
           patched = False
-          for root, dirs, files in os.walk("."):
+          for root, dirs, files in os.walk("jar_workspace"):
               for file in files:
                   if file.endswith(".smali"):
                       path = os.path.join(root, file)
@@ -155,13 +150,11 @@ jobs:
                           content = re.sub(pattern, replacement, content)
                           with open(path, "w", encoding="utf-8") as f: f.write(content)
                           patched = True
-          if not patched: raise SystemExit("Error: signature bypass target not found.")
+          if not patched: raise SystemExit("Error: signature bypass target not found in services.jar!")
           EOF
           
-          for d in smali_classes*; do java -jar ../smali.jar a "$d" -o "${d#smali_}.dex"; done
-          zip -qr0 services_patched.jar classes*.dex
-          cd ..
-          sudo cp jar_workspace/services_patched.jar tree/system/system/framework/services.jar
+          echo "💾 Recompiling Patched services.jar..."
+          java -jar apktool.jar b -q jar_workspace -c -o tree/system/system/framework/services.jar
 
       - name: "✨ Force Enable HyperOS 2 Blur & Animation Engines"
         run: |
@@ -199,7 +192,7 @@ jobs:
 
       - name: "🛡️ Generate AVB Neutralized VBMeta"
         run: |
-          python3 avbtool make_vbmeta_image --flags 3 --padding_size 4096 --output package_root/firmware-update/vbmeta.img
+          avbtool make_vbmeta_image --flags 3 --padding_size 4096 --output package_root/firmware-update/vbmeta.img
           cp package_root/firmware-update/vbmeta.img package_root/firmware-update/vbmeta_system.img
           cp package_root/firmware-update/vbmeta.img package_root/firmware-update/vbmeta_vendor.img
 
