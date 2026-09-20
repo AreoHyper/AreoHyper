@@ -1,4 +1,4 @@
-name: 🚀 Build & Release AeroHyper 2.0 Custom ROM
+name: 🚀 Build AeroHyper 2.0 (Ultimate Edition)
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   build_package:
-    name: "Compile & Publish Custom ROM"
+    name: "Compile AeroHyper 2.0"
     runs-on: ubuntu-24.04
     steps:
       - name: "🧹 Clean Environment & Install Toolchain"
@@ -29,16 +29,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y erofs-utils wget tar unzip android-sdk-libsparse-utils default-jdk python3 zip
           
-          echo "📥 Downloading Partition Tools..."
-          wget -q -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack || wget -q -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
-          wget -q -O lpmake https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpmake || wget -q -O lpmake https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpmake
-          chmod +x lpunpack lpmake
-          sudo mv lpunpack lpmake /usr/local/bin/
-          
-          echo "📥 Downloading AVBTool..."
-          wget -q -O avbtool https://raw.githubusercontent.com/aosp-mirror/platform_external_avb/main/avbtool || wget -q -O avbtool https://raw.githubusercontent.com/LineageOS/android_external_avb/lineage-21.0/avbtool.py
-          chmod +x avbtool
-          sudo mv avbtool /usr/local/bin/
+          echo "📥 Downloading Partition Tools (lpunpack, lpmake, lpdump)..."
+          wget -q -O lpunpack https://raw.githubusercontent.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
+          wget -q -O lpmake https://raw.githubusercontent.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpmake
+          wget -q -O lpdump https://raw.githubusercontent.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpdump
+          chmod +x lpunpack lpmake lpdump
+          sudo mv lpunpack lpmake lpdump /usr/local/bin/
 
       - name: "📥 Extract Stock Fastboot ROM & Firmwares"
         run: |
@@ -48,10 +44,10 @@ jobs:
           
           IMAGES_DIR=$(find stock_extracted -type d -name "images" | head -1)
           
-          cp -f $IMAGES_DIR/*.img package_root/firmware-update/ 2>/dev/null || true
-          cp -f $IMAGES_DIR/*.bin package_root/firmware-update/ 2>/dev/null || true
+          for img in boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img; do
+            cp -f "$IMAGES_DIR/$img" package_root/firmware-update/ 2>/dev/null || true
+          done
           
-          # CRITICAL PROTECTION: Delete preloader entirely to protect Eng Preloader and BROM access
           rm -f package_root/firmware-update/preloader*.bin package_root/firmware-update/preloader*.img 2>/dev/null || true
           
           SUPER="$IMAGES_DIR/super.img"
@@ -61,17 +57,19 @@ jobs:
           else
             SUPER_TARGET="$SUPER"
           fi
+          
+          lpdump "$SUPER_TARGET" > lpdump_metadata.txt
           lpunpack "$SUPER_TARGET" super_unpacked
           
           mkdir -p tree/system tree/system_ext tree/product tree/vendor tree/mi_ext
-          for part in system system_ext product vendor mi_ext; do
+          for part in system system_ext product mi_ext; do
             IMG=$(find super_unpacked -iname "${part}_a.img" | head -1)
             if [ -n "$IMG" ]; then
               sudo fsck.erofs --extract="tree/$part" "$IMG"
             fi
           done
 
-      - name: "📦 Extract Mods & Modules"
+      - name: "📦 Extract Kashi Modules"
         run: |
           mkdir -p mods mods_extracted
           wget -q -O mods/launcher.zip "$LAUNCHER_URL"
@@ -83,62 +81,52 @@ jobs:
             unzip -q "mods/$z.zip" -d "mods_extracted/$z"
           done
 
-      - name: "🧹 Verified Debloat"
+      - name: "🧹 Target Safe Debloat & App Injection"
         run: |
-          for path in \
-            "product/app/MSA-Global" "product/app/AnalyticsCore" "system_ext/app/MiSightService" \
-            "product/app/MiBugReportOS2Global" "mi_ext/app/MIUIMiPicks" "mi_ext/app/GameCenterGlobal" \
-            "system/app/Traceur" "product/app/facebook-appmanager" "product/priv-app/facebook-installer" \
-            "product/priv-app/facebook-services" "product/app/Longcheer_GFTest" "product/app/Longcheer_SensorTestTool" \
-            "product/app/Longcheer_factoryTest" "product/app/Longcheer_sileadManager" "product/app/AutoTest" \
-            "product/app/cit" "system_ext/app/DebugLoggerUI" "system_ext/app/EngineerMode" \
-            "system_ext/app/ModemTestBox" "system_ext/app/ATMWifiMeta" "system_ext/app/YGPS" \
-            "product/app/Drive" "product/app/Meet" "product/app/YTMusic"
-          do
-            if [ -d "tree/$path" ]; then
-              echo "🗑️ Removing bloatware: $path"
-              sudo rm -rf "tree/$path"
-            fi
+          for path in "product/app/MSA-Global" "product/app/AnalyticsCore" "product/app/MiBugReportOS2Global" "system/app/Traceur"; do
+            if [ -d "tree/$path" ]; then sudo rm -rf "tree/$path"; fi
           done
 
-      - name: "🔄 Replace Apps & Purge ART Bytecode Caches"
-        run: |
-          sudo cp mods_extracted/launcher/files/MiuiHome.apk tree/product/priv-app/MiuiHome/MiuiHome.apk
-          sudo rm -rf tree/product/priv-app/MiuiHome/oat tree/product/priv-app/MiuiHome/arm64 tree/product/priv-app/MiLauncherGlobal 2>/dev/null || true
-          if [ -f "mods_extracted/launcher/system/product/overlay/MiuiHomeLauncherResOverlay.apk" ]; then
-            sudo mkdir -p tree/product/overlay
-            sudo cp mods_extracted/launcher/system/product/overlay/MiuiHomeLauncherResOverlay.apk tree/product/overlay/
+          purge_art() {
+            sudo find "$1" -type f \( -name "*.odex" -o -name "*.vdex" -o -name "*.art" \) -delete 2>/dev/null || true
+          }
+
+          if [ -f "mods_extracted/launcher/files/MiuiHome.apk" ]; then
+            sudo cp mods_extracted/launcher/files/MiuiHome.apk tree/product/priv-app/MiuiHome/MiuiHome.apk
+            purge_art "tree/product/priv-app/MiuiHome"
           fi
           
-          sudo cp mods_extracted/security/files/SecurityCenter.apk tree/product/priv-app/MIUISecurityCenterGlobal/MIUISecurityCenterGlobal.apk
-          sudo rm -rf tree/product/priv-app/MIUISecurityCenterGlobal/oat tree/product/priv-app/MIUISecurityCenterGlobal/arm64 2>/dev/null || true
-          
-          sudo cp mods_extracted/aod/files/MIUIAod.apk tree/product/priv-app/MIUIAod/MIUIAod.apk
-          sudo rm -rf tree/product/priv-app/MIUIAod/oat tree/product/priv-app/MIUIAod/arm64 2>/dev/null || true
-          
-          sudo cp mods_extracted/theme/files/MIUIThemeManager.apk tree/product/app/MIUIThemeManagerGlobal/MIUIThemeManagerGlobal.apk
-          sudo rm -rf tree/product/app/MIUIThemeManagerGlobal/oat tree/product/app/MIUIThemeManagerGlobal/arm64 2>/dev/null || true
-          if [ -d "mods_extracted/theme/files/lib/arm64" ]; then
-            sudo mkdir -p tree/product/app/MIUIThemeManagerGlobal/lib/arm64
-            sudo cp mods_extracted/theme/files/lib/arm64/*.so tree/product/app/MIUIThemeManagerGlobal/lib/arm64/ 2>/dev/null || true
-            sudo chmod 644 tree/product/app/MIUIThemeManagerGlobal/lib/arm64/*.so 2>/dev/null || true
+          if [ -f "mods_extracted/security/files/SecurityCenter.apk" ]; then
+            sudo cp mods_extracted/security/files/SecurityCenter.apk tree/product/priv-app/MIUISecurityCenterGlobal/MIUISecurityCenterGlobal.apk
+            purge_art "tree/product/priv-app/MIUISecurityCenterGlobal"
           fi
           
-          VAULT_TARGET=$(find tree/mi_ext -iname "*MinusScreen*" -o -iname "*AppVault*" -type d 2>/dev/null | head -1)
-          if [ -n "$VAULT_TARGET" ]; then
+          if [ -f "mods_extracted/aod/files/MIUIAod.apk" ]; then
+            sudo cp mods_extracted/aod/files/MIUIAod.apk tree/product/priv-app/MIUIAod/MIUIAod.apk
+            purge_art "tree/product/priv-app/MIUIAod"
+          fi
+          
+          if [ -f "mods_extracted/theme/files/MIUIThemeManager.apk" ]; then
+            sudo cp mods_extracted/theme/files/MIUIThemeManager.apk tree/product/app/MIUIThemeManagerGlobal/MIUIThemeManagerGlobal.apk
+            purge_art "tree/product/app/MIUIThemeManagerGlobal"
+            if [ -d "mods_extracted/theme/files/lib/arm64" ]; then
+              sudo mkdir -p tree/product/app/MIUIThemeManagerGlobal/lib/arm64
+              sudo cp mods_extracted/theme/files/lib/arm64/*.so tree/product/app/MIUIThemeManagerGlobal/lib/arm64/ 2>/dev/null || true
+              sudo chmod 644 tree/product/app/MIUIThemeManagerGlobal/lib/arm64/*.so 2>/dev/null || true
+            fi
+          fi
+          
+          VAULT_TARGET=$(find tree/mi_ext \( -iname "*MinusScreen*" -o -iname "*AppVault*" \) -type d 2>/dev/null | head -1)
+          if [ -n "$VAULT_TARGET" ] && [ -f "mods_extracted/vault/files/AppVault.apk" ]; then
             sudo cp mods_extracted/vault/files/AppVault.apk "$VAULT_TARGET/$(basename "$VAULT_TARGET").apk"
-            sudo rm -rf "$VAULT_TARGET/oat" "$VAULT_TARGET/arm64" 2>/dev/null || true
+            purge_art "$VAULT_TARGET"
           fi
 
-      - name: "🔓 Multi-Dex Core Patch (Apktool Architecture)"
+      - name: "🔓 Core Signature Patch (Apktool Bypass)"
         run: |
-          echo "📥 Downloading Apktool (Official GitHub Release)..."
           wget -q -O apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
-          
-          echo "📦 Decompiling services.jar..."
           sudo java -jar apktool.jar d -q tree/system/system/framework/services.jar -o jar_workspace
           
-          echo "⚙️ Injecting Signature Bypass Hook..."
           sudo python3 - << 'EOF'
           import os, re
           patched = False
@@ -148,7 +136,7 @@ jobs:
                       path = os.path.join(root, file)
                       with open(path, "r", encoding="utf-8") as f: content = f.read()
                       if "compareSignatures" in content and "([Landroid/content/pm/Signature;[Landroid/content/pm/Signature;)I" in content:
-                          pattern = r"(\.method public static compareSignatures\(\[Landroid/content/pm/Signature;\[Landroid/content/pm/Signature;\)I\s+)([\s\S]*?)(\.end method)"
+                          pattern = r"(\.method [^\n]*compareSignatures\(\[Landroid/content/pm/Signature;\[Landroid/content/pm/Signature;\)I\s+)([\s\S]*?)(\.end method)"
                           replacement = r"\1    .registers 3\n    const/4 v0, 0x0\n    return v0\n\3"
                           content = re.sub(pattern, replacement, content)
                           with open(path, "w", encoding="utf-8") as f: f.write(content)
@@ -156,31 +144,24 @@ jobs:
           if not patched: raise SystemExit("Error: signature bypass target not found in services.jar!")
           EOF
           
-          echo "💾 Recompiling Patched services.jar..."
           sudo java -jar apktool.jar b -q jar_workspace -c -o tree/system/system/framework/services.jar
 
-      - name: "✨ Force Enable HyperOS 2 Blur & Animation Engines"
+      - name: "✨ UI Flags & Targeted Hardware-Safe Spoofing"
         run: |
           AIR_XML=$(sudo find tree/product -iname "air.xml" 2>/dev/null | head -1)
           if [ -n "$AIR_XML" ]; then
             sudo sed -i 's/<bool name="support_window_blur">false<\/bool>/<bool name="support_window_blur">true<\/bool>/g' "$AIR_XML"
             sudo sed -i 's/<bool name="support_new_control_center">false<\/bool>/<bool name="support_new_control_center">true<\/bool>/g' "$AIR_XML"
-            sudo sed -i 's/<bool name="is_low_end_device">true<\/bool>/<bool name="is_low_end_device">false<\/bool>/g' "$AIR_XML"
           fi
-          sudo find tree -iname "*build.prop" -not -path "*/vendor/*" -exec sudo sed -i 's/ro.config.low_ram=true/ro.config.low_ram=false/g' {} +
-          sudo find tree -iname "*build.prop" -not -path "*/vendor/*" -exec sudo sed -i 's/ro.config.low_ram.threshold_gb=99/ro.config.low_ram.threshold_gb=0/g' {} +
-
-      - name: "🎭 Device Spoofing (POCO F5 90 FPS + Pixel Photos)"
-        run: |
+          
           for prop in tree/product/etc/build.prop tree/system/system/build.prop tree/system_ext/etc/build.prop; do
             if [ -f "$prop" ]; then
               sudo sed -i 's/ro.product.model=.*/ro.product.model=23049PCD8G/g' "$prop"
               sudo sed -i 's/ro.product.brand=.*/ro.product.brand=POCO/g' "$prop"
               sudo sed -i 's/ro.product.name=.*/ro.product.name=marble/g' "$prop"
-              sudo sed -i 's/ro.product.device=.*/ro.product.device=marble/g' "$prop"
-              sudo sed -i 's/ro.product.marketname=.*/ro.product.marketname=POCO F5/g' "$prop"
             fi
           done
+
           PIXEL_XML="tree/product/etc/sysconfig/pixel_unlimited.xml"
           sudo mkdir -p tree/product/etc/sysconfig
           sudo bash -c "cat > $PIXEL_XML" << 'EOF'
@@ -192,63 +173,78 @@ jobs:
           </config>
           EOF
           sudo chmod 644 "$PIXEL_XML"
+          
+          sudo sed -i '$ a ro.aero.watermark=AeroHyper_Project' tree/system/system/build.prop
 
-      - name: "🛡️ Generate AVB Neutralized VBMeta"
-        run: |
-          avbtool make_vbmeta_image --flags 3 --padding_size 4096 --output package_root/firmware-update/vbmeta.img
-          cp package_root/firmware-update/vbmeta.img package_root/firmware-update/vbmeta_system.img
-          cp package_root/firmware-update/vbmeta.img package_root/firmware-update/vbmeta_vendor.img
-
-      - name: "💾 Compile EROFS Partitions & Repack Monolithic Super"
+      - name: "💾 Compile EROFS & Exact LP Metadata Super Repack"
         run: |
           mkdir -p output
-          cat tree/system/system/etc/selinux/*file_contexts* 2>/dev/null > all_contexts.txt || true
-          cat tree/product/etc/selinux/*file_contexts* 2>/dev/null >> all_contexts.txt || true
-          cat tree/system_ext/etc/selinux/*file_contexts* 2>/dev/null >> all_contexts.txt || true
-          cat tree/vendor/etc/selinux/*file_contexts* 2>/dev/null >> all_contexts.txt || true
           
-          sudo mkfs.erofs -zlz4hc --file-contexts=all_contexts.txt output/product.img tree/product
-          sudo mkfs.erofs -zlz4hc --file-contexts=all_contexts.txt output/system.img tree/system
-          sudo mkfs.erofs -zlz4hc --file-contexts=all_contexts.txt output/system_ext.img tree/system_ext
-          sudo mkfs.erofs -zlz4hc --file-contexts=all_contexts.txt output/mi_ext.img tree/mi_ext
+          SYS_CTX=$(find tree/system -name "plat_file_contexts" | head -1)
+          PROD_CTX=$(find tree/product -name "product_file_contexts" | head -1)
+          EXT_CTX=$(find tree/system_ext -name "system_ext_file_contexts" | head -1)
+          
+          [ -n "$SYS_CTX" ] && sudo mkfs.erofs -zlz4hc --file-contexts="$SYS_CTX" output/system.img tree/system
+          [ -n "$PROD_CTX" ] && sudo mkfs.erofs -zlz4hc --file-contexts="$PROD_CTX" output/product.img tree/product
+          [ -n "$EXT_CTX" ] && sudo mkfs.erofs -zlz4hc --file-contexts="$EXT_CTX" output/system_ext.img tree/system_ext
+          sudo mkfs.erofs -zlz4hc output/mi_ext.img tree/mi_ext
           sudo chown -R $USER:$USER output/
           
-          python3 - << 'EOF'
-          import subprocess, re, sys
-          raw_img = "super_raw.img"
-          with open(raw_img, "rb") as f: header_data = f.read(1048576)
-          matches = re.findall(b'([a-zA-Z0-9_]+_dynamic_partitions_a|[a-zA-Z0-9_]+_a|default)', header_data)
-          group_name = "main_a"
-          for m in matches:
-              name = m.decode('ascii', errors='ignore')
-              if "_a" in name and "qti" not in name:
-                  group_name = name; break
-          stat_size = subprocess.check_output(["stat", "-c%s", raw_img]).decode().strip()
-          with open("metadata_params.sh", "w") as out:
-              out.write(f'export DETECTED_SUPER_SIZE={stat_size}\nexport DETECTED_GROUP_NAME="{group_name}"\n')
+          sudo python3 - << 'EOF'
+          import os, re, shlex
+          
+          super_size = os.path.getsize("super_raw.img")
+          
+          with open("lpdump_metadata.txt", "r") as f:
+              dump = f.read()
+              
+          groups = {}
+          partitions = {}
+          
+          group_blocks = re.findall(r'Name:\s*([^\n]+)\n\s*Maximum size:\s*(\d+)', dump)
+          for name, max_size in group_blocks:
+              groups[name.strip()] = {"max_size": int(max_size), "new_sum": 0}
+              
+          part_blocks = re.finditer(r'Name:\s*([^\n]+)\n\s*Group:\s*([^\n]+)\n\s*Attributes:\s*([^\n]+)', dump)
+          for match in part_blocks:
+              p_name = match.group(1).strip()
+              p_group = match.group(2).strip()
+              p_attr = match.group(3).strip()
+              if "_b" in p_name: continue
+              partitions[p_name] = {"group": p_group, "attr": p_attr}
+              
+          lpmake_cmd = [
+              "lpmake",
+              "--metadata-size", "65536",
+              "--super-name", "super",
+              "--metadata-slots", "2",
+              "--device", f"super:{super_size}"
+          ]
+          
+          for p_name, data in partitions.items():
+              base_name = p_name.replace("_a", "")
+              src_img = f"output/{base_name}.img" if os.path.exists(f"output/{base_name}.img") else f"super_unpacked/{p_name}.img"
+                  
+              if os.path.exists(src_img):
+                  size = os.path.getsize(src_img)
+                  groups[data["group"]]["new_sum"] += size
+                  lpmake_cmd.extend(["--partition", f"{p_name}:{data['attr']}:{size}:{data['group']}", "--image", f"{p_name}={src_img}"])
+          
+          for g_name, g_data in groups.items():
+              if "cow" in g_name: continue
+              final_size = g_data["max_size"] if g_data["max_size"] > g_data["new_sum"] else g_data["new_sum"] + 15728640
+              lpmake_cmd.extend(["--group", f"{g_name}:{final_size}"])
+              
+          lpmake_cmd.extend(["--sparse", "--output", "package_root/firmware-update/super.img"])
+          
+          with open("repack.sh", "w") as f:
+              f.write("#!/bin/bash\n" + shlex.join(lpmake_cmd) + "\n")
           EOF
           
-          source metadata_params.sh
-          LPMAKE_ARGS="--metadata-size 65536 --super-name super --metadata-slots 2 --device super:$DETECTED_SUPER_SIZE"
-          TOTAL_SIZE=0
-          PART_ARGS=""
-          
-          for img_path in super_unpacked/*_a.img; do
-            filename=$(basename "$img_path")
-            part_name="${filename%.img}"
-            base_name="${part_name%_a}"
-            if [ -f "output/${base_name}.img" ]; then src_img="output/${base_name}.img"
-            else src_img="$img_path"; fi
-            size=$(stat -c\%s "$src_img")
-            TOTAL_SIZE=$((TOTAL_SIZE + size))
-            PART_ARGS="$PART_ARGS --partition$part_name:readonly:$size:$DETECTED_GROUP_NAME --image $part_name=$src_img"
-          done
-          
-          GROUP_SIZE=$((TOTAL_SIZE + 15728640))
-          LPMAKE_ARGS="$LPMAKE_ARGS --group$DETECTED_GROUP_NAME:$GROUP_SIZE$PART_ARGS --sparse --output package_root/firmware-update/super.img"
-          lpmake $LPMAKE_ARGS
+          chmod +x repack.sh
+          ./repack.sh
 
-      - name: "📜 Inject Dual-Slot Bulletproof Flash Scripts"
+      - name: "📜 Inject Clean Flash & VBMeta Neutralization Scripts"
         run: |
           wget -q https://dl.google.com/android/repository/platform-tools-latest-windows.zip -O pt_win.zip
           unzip -q pt_win.zip
@@ -263,11 +259,12 @@ jobs:
           chmod +x package_root/bin/linux/fastboot
           rm -rf platform-tools pt_linux.zip
 
-          cat << 'EOF' > package_root/windows_fastboot_install.bat
+          cat << 'EOF' > package_root/windows_clean_install.bat
           @echo off
           cd /d "%~dp0"
           set "fastboot=bin\windows\fastboot.exe"
           if not exist "%fastboot%" echo [ERROR] Fastboot missing. & pause & exit /B 1
+          
           echo Waiting for device in Fastboot mode...
           "%fastboot%" getvar product >nul 2>nul
           if %errorlevel% neq 0 (
@@ -275,34 +272,33 @@ jobs:
               pause
               exit /B 1
           )
-          for /f "tokens=2" %%D in ('"%fastboot%" getvar product 2^>^&1 ^| findstr /l /b /c:"product:"') do set device=%%D
-          if /i "%device%" neq "air" if /i "%device%" neq "atmos" (
-              echo [ERROR] Incompatible device: %device%. ROM strictly for air/atmos.
-              pause
-              exit /B 1
-          )
+
           echo ===================================================
-          echo       AeroHyper 2.0 Custom Flash - Redmi 13C 5G
+          echo    AeroHyper 2.0 Clean Flash (Wipes Data)
           echo ===================================================
-          "%fastboot%" set_active a
-          for %%p in (boot connsys_bt countrycode dpm dtbo gz init_boot lk logo mcf_ota mcupm md1img pi_img scp spmfw sspm tee vbmeta vbmeta_system vbmeta_vendor vcp vendor_boot) do (
+          
+          for %%p in (boot init_boot vendor_boot dtbo) do (
               if exist "firmware-update\%%p.img" (
-                  "%fastboot%" flash %%p_a "firmware-update\%%p.img"
-                  "%fastboot%" flash %%p_b "firmware-update\%%p.img"
+                  echo Flashing %%p...
+                  "%fastboot%" flash %%p "firmware-update\%%p.img"
+                  if %errorlevel% neq 0 echo [ERROR] %%p flash failed. Halting. & pause & exit /B 1
               )
           )
-          if exist "firmware-update\cust.img" "%fastboot%" flash cust "firmware-update\cust.img"
-          echo Flashing Super Partition...
-          "%fastboot%" flash super "firmware-update\super.img"
-          if %errorlevel% neq 0 (
-              echo [ERROR] Super partition failed! Halting to protect data.
-              pause
-              exit /B 1
+
+          if exist "firmware-update\vbmeta.img" (
+              echo Disabling Android Verified Boot...
+              "%fastboot%" --disable-verity --disable-verification flash vbmeta "firmware-update\vbmeta.img"
+              if %errorlevel% neq 0 echo [ERROR] VBMeta flash failed. Halting. & pause & exit /B 1
           )
-          "%fastboot%" erase metadata
+
+          echo Flashing Super Partition (This will take a few minutes)...
+          "%fastboot%" flash super "firmware-update\super.img"
+          if %errorlevel% neq 0 echo [ERROR] Super flash failed! & pause & exit /B 1
+
+          echo Erasing Data for a Clean Install...
           "%fastboot%" erase userdata
-          "%fastboot%" erase expdb
-          "%fastboot%" oem cdms
+          "%fastboot%" erase metadata
+
           echo ---------------------------------------------------
           echo Flash complete! Rebooting device...
           echo ---------------------------------------------------
@@ -310,83 +306,61 @@ jobs:
           pause
           EOF
 
-          cat << 'EOF' > package_root/linux_fastboot_install.sh
+          cat << 'EOF' > package_root/linux_clean_install.sh
           #!/bin/bash
           cd "$(dirname "$0")" || exit 1
           fastboot="bin/linux/fastboot"
           chmod +x "$fastboot"
+          
           echo "Waiting for device..."
           if ! "$fastboot" getvar product >/dev/null 2>&1; then echo "[ERROR] Device not detected!"; exit 1; fi
-          device=$("$fastboot" getvar product 2>&1 | grep -F "product:" | awk '{print $2}')
-          if [ "$device" != "air" ] && [ "$device" != "atmos" ]; then echo "[ERROR] Incompatible: $device"; exit 1; fi
-          "$fastboot" set_active a
-          for p in boot connsys_bt countrycode dpm dtbo gz init_boot lk logo mcf_ota mcupm md1img pi_img scp spmfw sspm tee vbmeta vbmeta_system vbmeta_vendor vcp vendor_boot; do
+          
+          for p in boot init_boot vendor_boot dtbo; do
               if [ -f "firmware-update/$p.img" ]; then
-                  "$fastboot" flash ${p}_a "firmware-update/$p.img"
-                  "$fastboot" flash ${p}_b "firmware-update/$p.img"
+                  echo "Flashing $p..."
+                  "$fastboot" flash "$p" "firmware-update/$p.img" \vert{}\vert{} { echo "[ERROR] $p flash failed."; exit 1; }
               fi
           done
-          [ -f "firmware-update/cust.img" ] && "$fastboot" flash cust "firmware-update/cust.img"
-          if ! "$fastboot" flash super "firmware-update/super.img"; then echo "[ERROR] Super failed!"; exit 1; fi
-          "$fastboot" erase metadata
-          "$fastboot" erase userdata
-          "$fastboot" erase expdb
-          "$fastboot" oem cdms
-          "$fastboot" reboot
-          echo "Finished! Rebooting..."
-          EOF
-          chmod +x package_root/linux_fastboot_install.sh
 
-      - name: "📦 Compress Flashable Distribution ZIP"
+          if [ -f "firmware-update/vbmeta.img" ]; then
+              echo "Disabling Android Verified Boot..."
+              "$fastboot" --disable-verity --disable-verification flash vbmeta "firmware-update/vbmeta.img" || { echo "[ERROR] VBMeta flash failed."; exit 1; }
+          fi
+
+          echo "Flashing Super Partition (This will take a few minutes)..."
+          "$fastboot" flash super "firmware-update/super.img" || { echo "[ERROR] Super flash failed!"; exit 1; }
+
+          echo "Erasing Data for a Clean Install..."
+          "$fastboot" erase userdata
+          "$fastboot" erase metadata
+
+          echo "Flash complete! Rebooting..."
+          "$fastboot" reboot
+          EOF
+          chmod +x package_root/linux_clean_install.sh
+
+      - name: "📦 Compress & Publish Clean-Flash ZIP"
         run: |
           cd package_root
           zip -r -1 ../AeroHyper_2.0_Air_Fastboot.zip ./*
+          echo "RELEASE_TAG=v2.0-$(date +\%Y\%m\%d\%H\%M)" >> $GITHUB_ENV
 
-      - name: "🏷️ Generate Release Tag"
-        run: echo "RELEASE_TAG=v2.0-$(date +\%Y\%m\%d\%H\%M)" >> $GITHUB_ENV
-
-      - name: "🚀 Publish to GitHub Releases"
+      - name: "🚀 Push to GitHub Releases"
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "AeroHyper 2.0 (Android 15) - Redmi 13C 5G / POCO M6 5G"
+          name: "AeroHyper 2.0 (Ultimate Edition) - Clean Flash"
           body: |
-            ## 🚀 AeroHyper 2.0 — Ultimate Rootless Custom ROM
+            ## 🚀 AeroHyper 2.0 (Clean Flash Build)
+            Fully featured, dynamically patched HyperOS build for Redmi 13C 5G / POCO M6 5G (`air`).
             
-            A clean, flagship-grade HyperOS 2.0 experience engineered natively for the **Redmi 13C 5G** and **POCO M6 5G** (air/atmos). Built for smooth visuals, high-frame-rate gaming, and zero bloatware.
-            
-            ### ✨ System & UI Enhancements
-            *   **Real-Time Control Center Blur:** Native Gaussian blur forced via `air.xml` reconfiguration.
-            *   **Advanced System Animations:** `is_low_end_device` constraints bypassed to unlock fluid transitions.
-            *   **Zero Background Throttling:** Global removal of `ro.config.low_ram` properties.
-            *   **Signature Bypass (Core Patch):** Multi-dex patched `services.jar` for unsigned application support.
-            *   **Neutralized AVB 2.0:** Pre-patched VBMeta images with hash verification permanently disabled.
-            
-            ### 🎮 Gaming & Exclusive Perks
-            *   **POCO F5 Spoofing:** System model spoofed to `marble` to unlock native **90 FPS in BGMI / PUBG Mobile**.
-            *   **Camera Protection:** Proprietary MediaTek vendor trees remain fully intact.
-            *   **Unlimited Google Photos:** Pixel 8 Pro sysconfig injected for original-quality cloud storage.
-            
-            ### ⚡ Integrated Custom Modules
-            *   **HyperOS Launcher:** Flagship recents provider and fluidity patch.
-            *   **HyperOS Security Center:** Unlocked performance and Game Turbo tiers.
-            *   **HyperOS Theme Manager:** Unrestricted 3rd-party theme importing.
-            *   **Advanced AOD:** Flagship lock screen clock styles unlocked.
-            
-            ### 🧹 Debloat Protocol
-            *   Purged Xiaomi tracking (`MSA-Global`, `AnalyticsCore`, `MiBugReport`).
-            *   Stripped third-party bloat (Facebook installers, factory test APKs).
-            *   Precompiled ART bytecaches cleanly wiped to ensure zero boot errors.
-            
-            ### 📦 Installation Guide
-            1. Extract the downloaded `AeroHyper_2.0_Air_Fastboot.zip` on your Windows or Linux PC.
-            2. Reboot your device to Fastboot mode (Hold `Volume Down + Power`).
-            3. Connect via USB and double-click `windows_fastboot_install.bat`.
-            4. Wait for the terminal to print complete and let the phone boot up. 
-            > ⚠️ **Note:** A clean flash wipes internal storage. Backup all data beforehand. Your engineering preloader is protected.
-            
-            ---
-            *Maintained by the Open Source Android Modding Community.*
+            ### ✨ Features
+            *   **Targeted 90 FPS Gaming Spoofing:** Spoofs UI model to unlock high FPS targets while safely keeping the core `air` camera HALs and thermal drivers perfectly intact.
+            *   **Unlimited Google Photos:** Pixel sysconfig XML injected.
+            *   **Real-Time Control Center Blur:** Native Gaussian blur forced via `air.xml`.
+            *   **Kashi Modules Injected:** Launcher, Security, AOD, and Theme Manager fully pre-installed with clean ART caches.
+            *   **Isolated Signature Bypass:** Native `services.jar` bytecode patched to bypass `compareSignatures`, ensuring seamless installation of modded system apps.
+            *   **Automated Clean Flash:** The installation batch file automatically wipes `userdata` and `metadata` to prevent dirty-flash bootloops.
           files: AeroHyper_2.0_Air_Fastboot.zip
           draft: false
           prerelease: false
