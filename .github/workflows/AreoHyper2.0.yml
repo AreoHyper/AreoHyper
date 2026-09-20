@@ -30,8 +30,8 @@ jobs:
           sudo apt-get install -y erofs-utils wget tar unzip android-sdk-libsparse-utils default-jdk python3 zip
           
           echo "📥 Downloading Partition Tools..."
-          wget -q -O lpunpack https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/Linux-debian/binary/lpunpack || wget -q -O lpunpack https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/main/binary/lpunpack
-          wget -q -O lpmake https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/Linux-debian/binary/lpmake || wget -q -O lpmake https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/main/binary/lpmake
+          wget -q -O lpunpack https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpunpack || wget -q -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
+          wget -q -O lpmake https://raw.githubusercontent.com/Exynos-nibba/lpunpack-lpmake-mirror/d0f9da322b764871e54072d1b3e9d67c09cd715c/binary/lpmake || wget -q -O lpmake https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpmake
           chmod +x lpunpack lpmake
           sudo mv lpunpack lpmake /usr/local/bin/
 
@@ -189,14 +189,13 @@ jobs:
           sudo chown -R $USER:$USER output/
           
           sudo python3 - << 'EOF'
-          import os, shlex
+          import os, subprocess
           
           super_size = os.path.getsize("super_raw.img")
           
           with open("super_raw.img", "rb") as f:
               header_data = f.read(1048576)
           
-          # Native Group Detection
           group_name = "main_a"
           for known_group in [b"qti_dynamic_partitions_a", b"main_a", b"google_dynamic_partitions_a"]:
               if known_group in header_data:
@@ -223,16 +222,13 @@ jobs:
                   total_size += size
                   lpmake_cmd.extend(["--partition", f"{p_name}:readonly:{size}:{group_name}", "--image", f"{p_name}={src_img}"])
           
-          group_size = total_size + 15728640 # Add 15MB headroom
+          group_size = total_size + 15728640
           lpmake_cmd.extend(["--group", f"{group_name}:{group_size}"])
           lpmake_cmd.extend(["--sparse", "--output", "package_root/firmware-update/super.img"])
           
-          with open("repack.sh", "w") as f:
-              f.write("#!/bin/bash\n" + shlex.join(lpmake_cmd) + "\n")
+          print("🚀 Executing lpmake natively...")
+          subprocess.run(lpmake_cmd, check=True)
           EOF
-          
-          chmod +x repack.sh
-          ./repack.sh
 
       - name: "📜 Inject Clean Flash & VBMeta Neutralization Scripts"
         run: |
