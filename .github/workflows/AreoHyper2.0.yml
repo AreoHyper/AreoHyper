@@ -95,7 +95,10 @@ jobs:
             "system_ext/app/ModemTestBox" "system_ext/app/ATMWifiMeta" "system_ext/app/YGPS" \
             "product/app/Drive" "product/app/Meet" "product/app/YTMusic"
           do
-            sudo rm -rf "tree/$path" 2>/dev/null || true
+            if [ -d "tree/$path" ]; then
+              echo "🗑️ Removing bloatware: $path"
+              sudo rm -rf "tree/$path"
+            fi
           done
 
       - name: "🔄 Replace Apps & Purge ART Bytecode Caches"
@@ -133,10 +136,10 @@ jobs:
           wget -q -O apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
           
           echo "📦 Decompiling services.jar..."
-          java -jar apktool.jar d -q tree/system/system/framework/services.jar -o jar_workspace
+          sudo java -jar apktool.jar d -q tree/system/system/framework/services.jar -o jar_workspace
           
           echo "⚙️ Injecting Signature Bypass Hook..."
-          python3 - << 'EOF'
+          sudo python3 - << 'EOF'
           import os, re
           patched = False
           for root, dirs, files in os.walk("jar_workspace"):
@@ -154,7 +157,7 @@ jobs:
           EOF
           
           echo "💾 Recompiling Patched services.jar..."
-          java -jar apktool.jar b -q jar_workspace -c -o tree/system/system/framework/services.jar
+          sudo java -jar apktool.jar b -q jar_workspace -c -o tree/system/system/framework/services.jar
 
       - name: "✨ Force Enable HyperOS 2 Blur & Animation Engines"
         run: |
