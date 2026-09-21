@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ROM_URL:
-        description: "Direct Download Link for the ROM (Google Drive, SourceForge, GitHub)"
+        description: "ROM Link (Buzzheavier, Google Drive, or Direct Link)"
         required: true
         default: ""
 
@@ -16,13 +16,13 @@ jobs:
       - name: "🧹 Clean Environment & Install Tools"
         run: |
           sudo apt-get update
-          sudo apt-get install -y erofs-utils wget tar unzip python3 default-jdk
+          sudo apt-get install -y erofs-utils wget tar unzip python3 default-jdk curl file
           
           # Install Partition Tools
           wget -q -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
           chmod +x lpunpack && sudo mv lpunpack /usr/local/bin/
           
-          # Install Payload Dumper Go (for Recovery ROMs)
+          # Install Payload Dumper Go (for Recovery ROMs like EiaxoOS)
           wget -q -O payload-dumper.tar.gz https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz
           tar -xf payload-dumper.tar.gz
           chmod +x payload-dumper-go && sudo mv payload-dumper-go /usr/local/bin/
@@ -30,16 +30,45 @@ jobs:
           # Install Apktool
           wget -q -O apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
 
-      - name: "📥 Download Target ROM"
+      - name: "📥 Smart Download Target ROM"
         run: |
-          echo "Downloading ROM..."
-          # Support Google Drive links natively using gdown
-          if [[ "${{ github.event.inputs.ROM_URL }}" == *"drive.google.com"* ]]; then
+          echo "Connecting to provided URL..."
+          URL="${{ github.event.inputs.ROM_URL }}"
+          
+          # Native Google Drive Support
+          if [[ "$URL" == *"drive.google.com"* ]]; then
             sudo pip3 install gdown --break-system-packages
-            gdown "${{ github.event.inputs.ROM_URL }}" -O target_rom.zip
+            gdown "$URL" -O target_rom.zip
           else
-            wget -q -O target_rom.zip "${{ github.event.inputs.ROM_URL }}"
+            # Download URL using a standard browser user-agent
+            curl -sL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o target_rom.zip "$URL"
+            
+            # Buzzheavier / HTML Webpage Parser
+            if file target_rom.zip | grep -q "HTML"; then
+              echo "Webpage detected. Scraping for direct ZIP download link..."
+              DIRECT_LINK=$(grep -oP 'href="\K(https://[^"]+\.zip)' target_rom.zip | head -n 1)
+              
+              if [ -z "$DIRECT_LINK" ]; then
+                  # Fallback regex search
+                  DIRECT_LINK=$(grep -oP 'https://[^"]+\.zip' target_rom.zip | head -n 1)
+              fi
+              
+              if [ -n "$DIRECT_LINK" ]; then
+                echo "Successfully extracted direct link: $DIRECT_LINK"
+                curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o target_rom.zip "$DIRECT_LINK"
+              else
+                echo "Error: Could not extract the direct ZIP link from the webpage."
+                exit 1
+              fi
+            fi
           fi
+          
+          # Verify download integrity
+          if ! unzip -t target_rom.zip > /dev/null 2>&1; then
+            echo "Error: The downloaded file is corrupt or not a valid ZIP archive!"
+            exit 1
+          fi
+          echo "ROM downloaded successfully!"
 
       - name: "📦 Extract Firmware Payload"
         run: |
