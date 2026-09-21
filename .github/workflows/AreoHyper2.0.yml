@@ -133,7 +133,7 @@ jobs:
             fi
           fi
 
-      - name: "🔓 Core Signature Patch (Native Apktool)"
+      - name: "🔓 Core Signature Patch (Safe Unrooted Bypass)"
         run: |
           wget -q -O apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
           sudo java -jar apktool.jar d -q tree/system/system/framework/services.jar -o jar_workspace
@@ -160,9 +160,8 @@ jobs:
       - name: "✨ Native XML Injector & Target Spoofing"
         run: |
           sudo python3 - << 'EOF'
-          import os, glob
+          import os, glob, re
           
-          # 1. Find and update air.xml safely using Python
           xml_files = glob.glob("tree/**/air.xml", recursive=True)
           flags_to_inject = {
               "support_window_blur": "true",
@@ -199,7 +198,6 @@ jobs:
                   print(f"Successfully patched {xml_path}")
           EOF
           
-          # 2. POCO F5 Spoofing
           for prop in tree/product/etc/build.prop tree/system/system/build.prop tree/system_ext/etc/build.prop; do
             if [ -f "$prop" ]; then
               sudo sed -i 's/ro.product.model=.*/ro.product.model=23049PCD8G/g' "$prop"
@@ -208,7 +206,6 @@ jobs:
             fi
           done
 
-          # Pixel Unlimited Photos
           PIXEL_XML="tree/product/etc/sysconfig/pixel_unlimited.xml"
           sudo mkdir -p tree/product/etc/sysconfig
           sudo bash -c "cat > $PIXEL_XML" << 'EOF'
@@ -369,10 +366,9 @@ jobs:
             *   **AVB Chain Neutralized:** `vbmeta_system` and `vbmeta_vendor` bootloops permanently fixed.
             *   **SELinux Contexts Enforced:** Eliminates "unlabeled" app injection crashes.
             *   **Targeted 90 FPS Gaming Spoofing:** Spoofs UI model to unlock high FPS targets safely.
-            *   **Unlimited Google Photos:** Pixel sysconfig XML injected.
-            *   **Real-Time Control Center Blur:** Native Gaussian blur forced via XML injection.
+            *   **Real-Time Control Center Blur:** Native Gaussian blur forced via Python XML injection.
             *   **HyperBridge Integration:** A15-compatible notification pill natively integrated.
-            *   **Flagship Device Frames:** Safely unlocked via native XML override to prevent API crashes.
+            *   **Flagship Device Frames:** Safely unlocked via native XML override.
             *   **Safe Flagship Unlocks:** App hiding, Sound Assist, Partial Screenshots, OCR, and Wild Boost natively enabled.
           draft: false
           prerelease: false
