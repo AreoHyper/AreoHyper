@@ -1,202 +1,122 @@
-      - name: "🔍 Run Full Forensic ROM Audit"
+name: 🕵️ HyperOS ROM Auditor
+
+on:
+  workflow_dispatch:
+    inputs:
+      ROM_URL:
+        description: "Direct Download Link for the ROM (Google Drive, SourceForge, GitHub)"
+        required: true
+        default: ""
+
+jobs:
+  audit_rom:
+    name: "Audit Competitor ROM"
+    runs-on: ubuntu-24.04
+    steps:
+      - name: "🧹 Clean Environment & Install Tools"
         run: |
-          # Grant global read access to the extracted Android filesystem
-          sudo chmod -R a+rX audit_tree/ 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y erofs-utils wget tar unzip python3 default-jdk
           
-          # Run the audit as root to bypass any remaining strict file permissions
-          sudo python3 - << 'EOF'
-          import os, sys, zipfile, re
+          # Install Partition Tools
+          wget -q -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
+          chmod +x lpunpack && sudo mv lpunpack /usr/local/bin/
+          
+          # Install Payload Dumper Go (for Recovery ROMs)
+          wget -q -O payload-dumper.tar.gz https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz
+          tar -xf payload-dumper.tar.gz
+          chmod +x payload-dumper-go && sudo mv payload-dumper-go /usr/local/bin/
+          
+          # Install Apktool
+          wget -q -O apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
 
-          print("==================================================")
-          print("      AEROHYPER 2.0 FULL FORENSIC ARTIFACT AUDIT   ")
-          print("==================================================")
+      - name: "📥 Download Target ROM"
+        run: |
+          echo "Downloading ROM..."
+          # Support Google Drive links natively using gdown
+          if [[ "${{ github.event.inputs.ROM_URL }}" == *"drive.google.com"* ]]; then
+            sudo pip3 install gdown --break-system-packages
+            gdown "${{ github.event.inputs.ROM_URL }}" -O target_rom.zip
+          else
+            wget -q -O target_rom.zip "${{ github.event.inputs.ROM_URL }}"
+          fi
 
-          errors = 0
-          warnings = 0
+      - name: "📦 Extract Firmware Payload"
+        run: |
+          mkdir -p extracted_rom partitions audit_results
+          
+          if unzip -l target_rom.zip | grep -q "payload.bin"; then
+            echo "Recovery ROM detected. Dumping payload.bin..."
+            unzip -q target_rom.zip payload.bin -d extracted_rom/
+            payload-dumper-go -p system,product,system_ext,vendor -o partitions extracted_rom/payload.bin
+          else
+            echo "Fastboot ROM detected. Extracting super.img..."
+            mkdir -p temp_fastboot
+            tar -xf target_rom.zip -C temp_fastboot 2>/dev/null || unzip -q target_rom.zip -d temp_fastboot
+            SUPER_IMG=$(find temp_fastboot -name "super.img" | head -1)
+            lpunpack "$SUPER_IMG" partitions/
+          fi
+          
+          echo "Extracting EROFS Partitions..."
+          mkdir -p tree/system tree/product tree/vendor tree/system_ext
+          for part in system product vendor system_ext; do
+            IMG=$(find partitions -iname "*${part}*.img" | head -1)
+            if [ -n "$IMG" ]; then
+              sudo fsck.erofs --extract="tree/$part" "$IMG"
+            fi
+          done
 
-          # 1. Check Package Core Partitions
-          print("\n[1] Checking Package Partitions & Scripts...")
-          fw_dir = "extracted_package/firmware-update"
-          required_imgs = ["boot.img", "init_boot.img", "vendor_boot.img", "dtbo.img", "vbmeta.img", "super.img"]
-          for img in required_imgs:
-              p = os.path.join(fw_dir, img)
-              if os.path.exists(p):
-                  mb = os.path.getsize(p) / (1024 * 1024)
-                  print(f"  [PASS] {img:<16} ({mb:.2f} MB)")
-              else:
-                  print(f"  [FAIL] Missing image: {img}")
-                  errors += 1
+      - name: "🔎 Audit Phase 1: Build Props & Spoofing"
+        run: |
+          mkdir -p audit_results/props
+          echo "Collecting build.prop files..."
+          for prop in tree/product/etc/build.prop tree/system/system/build.prop tree/system_ext/etc/build.prop tree/vendor/build.prop; do
+            if [ -f "$prop" ]; then
+              PART_NAME=$(echo "$prop" | cut -d'/' -f2)
+              cp "$prop" "audit_results/props/${PART_NAME}_build.prop"
+            fi
+          done
+          
+          echo "Generating Spoof Report..."
+          grep -E "ro.product.model|ro.product.brand|ro.build.characteristics" audit_results/props/* > audit_results/spoof_report.txt || true
 
-          bat_path = "extracted_package/windows_clean_install.bat"
-          if os.path.exists(bat_path):
-              with open(bat_path, "r") as f:
-                  b_txt = f.read()
-              if "--disable-verity --disable-verification" in b_txt and "erase userdata" in b_txt:
-                  print("  [PASS] windows_clean_install.bat contains clean wipe & AVB disable flags.")
-              else:
-                  print("  [WARN] windows_clean_install.bat missing AVB or wipe flags.")
-                  warnings += 1
-          else:
-              print("  [FAIL] windows_clean_install.bat missing from root!")
-              errors += 1
+      - name: "🔎 Audit Phase 2: Feature XMLs"
+        run: |
+          mkdir -p audit_results/xmls
+          echo "Collecting device feature XMLs..."
+          find tree/product tree/system -type f -name "*.xml" | grep "device_features" | while read -r file; do
+            cp "$file" "audit_results/xmls/$(basename "$file")"
+          done
+          
+          find tree/product tree/system -type f -name "*.xml" | grep "sysconfig" | grep -i "pixel" | while read -r file; do
+            cp "$file" "audit_results/xmls/$(basename "$file")"
+          done
 
-          # 2. Check Modded Kashi Modules
-          print("\n[2] Checking Injected Kashi Modules...")
-          kashi_apps = {
-              "HyperOS Launcher": "audit_tree/product/priv-app/MiuiHome/MiuiHome.apk",
-              "Security Center": "audit_tree/product/priv-app/MIUISecurityCenterGlobal/MIUISecurityCenterGlobal.apk",
-              "Always On Display": "audit_tree/product/priv-app/MIUIAod/MIUIAod.apk",
-              "Theme Manager": "audit_tree/product/app/MIUIThemeManagerGlobal/MIUIThemeManagerGlobal.apk"
-          }
-          for name, path in kashi_apps.items():
-              if os.path.exists(path):
-                  size_mb = os.path.getsize(path) / (1024 * 1024)
-                  print(f"  [PASS] {name:<18} -> Present ({size_mb:.2f} MB)")
-              else:
-                  print(f"  [FAIL] {name:<18} -> MISSING at {path}")
-                  errors += 1
+      - name: "🔎 Audit Phase 3: Services.jar (Core Patch Logic)"
+        run: |
+          mkdir -p audit_results/core_patch
+          JAR_PATH=$(find tree/system -name "services.jar" | head -1)
+          
+          if [ -n "$JAR_PATH" ]; then
+            echo "Decompiling services.jar..."
+            java -jar apktool.jar d -q "$JAR_PATH" -o decompiled_services
+            
+            echo "Hunting for compareSignatures..."
+            TARGET_SMALI=$(find decompiled_services -type f -name "*.smali" | xargs grep -l "compareSignatures" | head -1)
+            
+            if [ -n "$TARGET_SMALI" ]; then
+              echo "Found signature logic at: $TARGET_SMALI"
+              cp "$TARGET_SMALI" audit_results/core_patch/compareSignatures_logic.smali
+            else
+              echo "compareSignatures not found. They might be using a different bypass method." > audit_results/core_patch/not_found.txt
+            fi
+          else
+            echo "services.jar not found."
+          fi
 
-          # Verify App Vault in mi_ext
-          vault_found = False
-          for root, dirs, files in os.walk("audit_tree/mi_ext"):
-              for f in files:
-                  if "AppVault" in f or "MinusScreen" in f:
-                      vault_found = True
-                      print(f"  [PASS] App Vault/MinusScreen -> Found: {f}")
-                      break
-          if not vault_found:
-              print("  [WARN] Modded App Vault not found in mi_ext tree.")
-              warnings += 1
-
-          # 3. Check Stale ART Cache Files (Must be clean)
-          print("\n[3] Checking ART Cache Purge Status...")
-          stale_art = []
-          for root, dirs, files in os.walk("audit_tree/product"):
-              for f in files:
-                  if f.endswith((".odex", ".vdex", ".art")) and any(app in root for app in ["MiuiHome", "SecurityCenter", "MIUIAod", "ThemeManager"]):
-                      stale_art.append(os.path.join(root, f))
-          if not stale_art:
-              print("  [PASS] Stale ART caches (.odex/.vdex/.art) completely purged.")
-          else:
-              print(f"  [WARN] Found {len(stale_art)} unpurged ART cache files.")
-              warnings += 1
-
-          # 4. Check Core Signature Verification Bypass in services.jar
-          print("\n[4] Checking services.jar Signature Bypass...")
-          services_jar = "audit_tree/system/system/framework/services.jar"
-          if os.path.exists(services_jar):
-              print("  [PASS] services.jar exists.")
-              try:
-                  with zipfile.ZipFile(services_jar, 'r') as jar:
-                      dex_files = [f for f in jar.namelist() if f.endswith(".dex")]
-                      patched = False
-                      for d in dex_files:
-                          dex_bytes = jar.read(d)
-                          if b"compareSignatures" in dex_bytes:
-                              patched = True
-                              break
-                      if patched:
-                          print(f"  [PASS] services.jar contains compareSignatures bytecode hook across {len(dex_files)} DEX file(s).")
-                      else:
-                          print("  [WARN] compareSignatures method token not indexed in DEX pools.")
-                          warnings += 1
-              except Exception as e:
-                  print(f"  [WARN] Could not inspect services.jar internal DEX: {e}")
-                  warnings += 1
-          else:
-              print(f"  [FAIL] services.jar missing at {services_jar}")
-              errors += 1
-
-          # 5. Check Pixel Unlimited Photos XML
-          print("\n[5] Checking Google Photos Unlimited Backup...")
-          pixel_xml = "audit_tree/product/etc/sysconfig/pixel_unlimited.xml"
-          if os.path.exists(pixel_xml):
-              with open(pixel_xml, "r") as f:
-                  px_txt = f.read()
-              if "PIXEL_2021_MIDYEAR_STORAGE" in px_txt:
-                  print("  [PASS] pixel_unlimited.xml properly injected with Google Photos entitlement.")
-              else:
-                  print("  [WARN] pixel_unlimited.xml present but feature key missing.")
-                  warnings += 1
-          else:
-              print("  [FAIL] pixel_unlimited.xml is missing from /product/etc/sysconfig/!")
-              errors += 1
-
-          # 6. Check UI Blur & Control Center in air.xml
-          print("\n[6] Checking UI Window Blur & Control Center Flags...")
-          air_xml_found = False
-          for root, dirs, files in os.walk("audit_tree/product"):
-              if "air.xml" in files:
-                  air_xml_found = True
-                  xml_path = os.path.join(root, "air.xml")
-                  with open(xml_path, "r") as f:
-                      content = f.read()
-                  blur = 'name="support_window_blur">true' in content
-                  cc = 'name="support_new_control_center">true' in content
-                  if blur and cc:
-                      print("  [PASS] air.xml forces both 'support_window_blur' and 'support_new_control_center' to TRUE.")
-                  else:
-                      print(f"  [WARN] air.xml flags -> Blur: {blur}, New CC: {cc}. The UI blur mod failed to apply during compilation.")
-                      warnings += 1
-          if not air_xml_found:
-              print("  [FAIL] air.xml not found in product partition!")
-              errors += 1
-
-          # 7. Check 90 FPS Gaming Spoof & Camera HAL Safety
-          print("\n[7] Checking Gaming Spoof & Hardware Camera HAL Integrity...")
-          poco_model_found = False
-          safe_device_intact = True
-
-          for root, dirs, files in os.walk("audit_tree"):
-              if "build.prop" in files:
-                  bp_path = os.path.join(root, "build.prop")
-                  with open(bp_path, "r", errors="ignore") as f:
-                      bp_data = f.read()
-                  if "ro.product.model=23049PCD8G" in bp_data:
-                      poco_model_found = True
-                  if "ro.hardware=marble" in bp_data or "ro.product.vendor.device=marble" in bp_data:
-                      safe_device_intact = False
-
-          if poco_model_found:
-              print("  [PASS] ro.product.model correctly spoofed to POCO F5 (23049PCD8G) for 90 FPS gaming.")
-          else:
-              print("  [FAIL] POCO F5 model spoof not found in build properties!")
-              errors += 1
-
-          if safe_device_intact:
-              print("  [PASS] Hardware platform & vendor device preserved as 'air' (Camera HAL & thermals safe).")
-          else:
-              print("  [FAIL] Low-level hardware improperly spoofed to marble! Camera HAL will crash.")
-              errors += 1
-
-          # 8. Check Safe Debloat
-          print("\n[8] Checking Safe Debloat...")
-          trackers = ["product/app/MSA-Global", "product/app/AnalyticsCore", "product/app/MiBugReportOS2Global", "system/app/Traceur"]
-          trackers_active = [t for t in trackers if os.path.exists(f"audit_tree/{t}")]
-          if not trackers_active:
-              print("  [PASS] System tracking telemetry bloatware successfully removed.")
-          else:
-              print(f"  [WARN] Active bloatware directories remaining: {trackers_active}")
-              warnings += 1
-
-          # 9. Check Project Watermark
-          print("\n[9] Checking Build Watermark...")
-          system_bp = "audit_tree/system/system/build.prop"
-          if os.path.exists(system_bp):
-              with open(system_bp, "r") as f:
-                  if "ro.aero.watermark=AeroHyper_Project" in f.read():
-                      print("  [PASS] 'ro.aero.watermark=AeroHyper_Project' present.")
-                  else:
-                      print("  [WARN] Watermark not found in system/system/build.prop.")
-                      warnings += 1
-
-          print("\n==================================================")
-          print(f" FINAL AUDIT SUMMARY: {errors} Error(s), {warnings} Warning(s)")
-          print("==================================================")
-
-          if errors > 0:
-              print("❌ AUDIT FAILED: Required ROM integrity checks did not pass.")
-              sys.exit(1)
-          else:
-              print("✅ ALL CRITICAL SYSTEMS VERIFIED! ROM IS SAFE & READY TO FLASH.")
-          EOF
+      - name: "📦 Upload Audit Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: EiaxoOS_Audit_Report
+          path: audit_results/
+          retention-days: 7
