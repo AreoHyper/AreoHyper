@@ -1,4 +1,4 @@
-name: Get Real Super Partition Size (from LP Metadata)
+name: Get Real Super Partition Size
 
 on:
   workflow_dispatch:
@@ -24,11 +24,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y android-sdk-libsparse-utils file
-          wget -q -O lpdump https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpdump
-          chmod +x lpdump
-          sudo mv lpdump /usr/local/bin/
 
-      - name: Read actual super partition size from LP metadata
+      - name: Read actual super partition size
         run: |
           set -euo pipefail
 
@@ -39,37 +36,25 @@ jobs:
           fi
           echo "Found super.img at: $SUPER_PATH"
 
-          # File size is NOT the real answer if the image is sparse — unsparse it first
-          if file "$SUPER_PATH" | grep -qi sparse; then
-            echo "Image is sparse — converting to raw before reading metadata..."
+          FILE_TYPE=$(file "$SUPER_PATH")
+          echo "File type: $FILE_TYPE"
+
+          if echo "$FILE_TYPE" | grep -qi sparse; then
+            echo "Image is sparse — unsparsing to get the true declared size..."
             simg2img "$SUPER_PATH" super_raw.img
-            READ_PATH="super_raw.img"
+            REAL_SIZE=$(stat -c%s super_raw.img)
+            rm -f super_raw.img
           else
-            READ_PATH="$SUPER_PATH"
+            echo "Image is already raw."
+            REAL_SIZE=$(stat -c%s "$SUPER_PATH")
           fi
 
-          echo "Raw file size (NOT what we want, shown for comparison): $(stat -c%s "$READ_PATH") bytes"
+          REAL_SIZE_HUMAN=$(numfmt --to=iec-i --suffix=B "$REAL_SIZE")
 
           echo "----------------------------------------"
-          echo "Running lpdump on: $READ_PATH"
+          echo "ACTUAL DEVICE SUPER SIZE (bytes): $REAL_SIZE"
+          echo "ACTUAL DEVICE SUPER SIZE (human): $REAL_SIZE_HUMAN"
+          echo "Use this exact byte value for DEVICE_SUPER_SIZE_BYTES"
           echo "----------------------------------------"
-          lpdump "$READ_PATH" | tee lpdump_output.txt
 
-          # Pull the real declared device size out of the metadata block
-          REAL_SIZE=$(grep -iE "Super partition size|Block device.*size" lpdump_output.txt | grep -oE '[0-9]+' | head -1)
-
-          if [ -z "$REAL_SIZE" ]; then
-            echo "::warning::Could not auto-parse the size — check lpdump_output.txt manually below."
-          else
-            echo "----------------------------------------"
-            echo "ACTUAL DEVICE SUPER SIZE (bytes): $REAL_SIZE"
-            echo "Use this value for DEVICE_SUPER_SIZE_BYTES"
-            echo "----------------------------------------"
-            echo "SUPER_SIZE_BYTES=$REAL_SIZE" >> $GITHUB_ENV
-          fi
-
-      - name: Upload lpdump output as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lpdump-output
-          path: lpdump_output.txt
+          echo "SUPER_SIZE_BYTES=$REAL_SIZE" >> $GITHUB_ENV
