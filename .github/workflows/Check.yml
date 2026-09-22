@@ -1,0 +1,49 @@
+name: Get Super Partition Size
+
+on:
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+
+jobs:
+  get-size:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Fastboot ROM
+        run: |
+          echo "Downloading ROM..."
+          wget -O rom.tgz "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS2.0.208.0.VGQINXM/air_in_global_images_OS2.0.208.0.VGQINXM_20260804.0000.00_15.0_in_35b733efaa.tgz"
+
+      - name: Extract ROM
+        run: |
+          echo "Extracting tar file..."
+          mkdir -p extracted_rom
+          tar -xvf rom.tgz -C extracted_rom --strip-components=1 || tar -xvf rom.tgz -C extracted_rom
+
+      - name: Find and Measure Super Partition
+        run: |
+          echo "Searching for super.img..."
+          SUPER_PATH=$(find extracted_rom -name "super.img" -print -quit)
+          
+          if [ -z "$SUPER_PATH" ]; then
+            echo "Error: super.img not found in the extracted files!"
+            exit 1
+          fi
+          
+          echo "Found super.img at: $SUPER_PATH"
+          
+          # Get file size in bytes
+          SIZE_BYTES=$(stat -c%s "$SUPER_PATH")
+          
+          # Get file size in human-readable format (MB/GB)
+          SIZE_HUMAN=$(du -h "$SUPER_PATH" | cut -f1)
+          
+          echo "----------------------------------------"
+          echo "SUPER PARTITION SIZE (Bytes): $SIZE_BYTES"
+          echo "SUPER PARTITION SIZE (Human): $SIZE_HUMAN"
+          echo "----------------------------------------"
+          
+          # Save size to GitHub environment output if needed by later steps
+          echo "SUPER_SIZE_BYTES=$SIZE_BYTES" >> $GITHUB_ENV
