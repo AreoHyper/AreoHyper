@@ -1,10 +1,9 @@
-Name: 🔍 Audit Greeshan Repack Base Features
+name: 🔍 Audit Greeshan Repack Base Features
 
 on:
   workflow_dispatch:
 
 env:
-  # The exact SourceForge link you provided
   ROM_URL: "https://downloads.sourceforge.net/project/miui-greeshan-repack/HyperOS2/Redmi-13C-air/greeshan.by_Redmi13C_5G_air_OS2.0.208.0.VGQINXM_15.0_99c03.zip?ts=gAAAAABqsp7g8HzuyxkFSDd8ITBTILv-VOruIsjNIih90R24pdeBsZCwdbZOH-PkElN6POucSAmARbHfaiBK5dYJ6VDklHyHzw%3D%3D&use_mirror=twds"
 
 jobs:
@@ -44,7 +43,10 @@ jobs:
           mkdir -p audit_workspace/extracted audit_workspace/tree
           
           echo "Downloading Greeshan Repack..."
-          wget -q --show-progress -O greeshan_rom.zip "$ROM_URL"
+          curl -L --fail --retry 3 -o greeshan_rom.zip "$ROM_URL"
+          
+          echo "Verifying downloaded archive..."
+          file greeshan_rom.zip | grep -qi "Zip archive" || { echo "::error::SourceForge mirror returned an invalid file/HTML page."; exit 1; }
           
           echo "Unzipping archive..."
           unzip -q greeshan_rom.zip -d audit_workspace/extracted/
@@ -74,7 +76,6 @@ jobs:
                   echo "Found brotli compressed $part. Decompressing..."
                   brotli -d "$part.new.dat.br" -o "$part.new.dat"
                   
-                  # Download sdat2img to convert sparse dat to raw img
                   wget -q https://raw.githubusercontent.com/xpirt/sdat2img/master/sdat2img.py
                   python3 sdat2img.py "$part.transfer.list" "$part.new.dat" "$part.img"
                   rm -f "$part.new.dat" "$part.transfer.list" "$part.new.dat.br"
@@ -113,13 +114,13 @@ jobs:
               java -jar /usr/local/bin/apktool.jar d -r -q "$SERVICES_JAR" -o services_smali
               
               MATCHES=$(python3 -c '
-          import os, re
+          import os
           targets = ["compareSignatures", "checkSignatures", "matchSignatures"]
           found = False
           for root, _, files in os.walk("services_smali"):
               for f in files:
                   if not f.endswith(".smali"): continue
-                  with open(os.path.join(root, f), "r") as smali:
+                  with open(os.path.join(root, f), "r", errors="ignore") as smali:
                       content = smali.read()
                       for t in targets:
                           if f" {t}(" in content:
@@ -129,23 +130,21 @@ jobs:
               ')
               REPORT+="$MATCHES\n\n"
               
-              # Check if modified
-              if grep -q "const/4 v0, 0x0" services_smali/smali/com/android/server/pm/PackageManagerServiceUtils.smali 2>/dev/null; then
-                  REPORT+="- ✅ **Status:** Core Patch is ACTIVE (Hardcoded to return 0x0/0x1).\n\n"
+              if grep -rq "const/4 v0, 0x0" services_smali/smali/com/android/server/pm/ 2>/dev/null; then
+                  REPORT+="- ✅ **Status:** Core Patch is ACTIVE.\n\n"
               else
-                  REPORT+="- ⚠️ **Status:** Looks UNPATCHED (Original bytecode detected). You will need to patch this manually to use Kashi mods.\n\n"
+                  REPORT+="- ⚠️ **Status:** Looks UNPATCHED (Original bytecode detected). Needs manual patching for Kashi mods.\n\n"
               fi
           else
-              REPORT+="- ❌ `services.jar` not found.\n\n"
+              REPORT+="- ❌ \`services.jar\` not found.\n\n"
           fi
 
           # 2. FLAGSHIP XML INJECTIONS
-          REPORT+="### 2. Device Features (`air.xml` / `miui_features.xml`)\n"
+          REPORT+="### 2. Device Features (\`air.xml\` / \`miui_features.xml\`)\n"
           XML_FILES=$(find tree -name "*air*.xml" -o -name "*miui_features*.xml" 2>/dev/null)
           if [ -n "$XML_FILES" ]; then
               for xml in $XML_FILES; do
                   REPORT+="**File:** \`$xml\`\n"
-                  
                   for flag in support_window_blur enable_miui_lite is_hongmi support_new_control_center support_app_hiding; do
                       VAL=$(grep -oP "(?<=<bool name=\"$flag\">)[^<]+" "$xml" || echo "NOT FOUND")
                       REPORT+="- \`$flag\`: **$VAL**\n"
@@ -156,19 +155,19 @@ jobs:
               REPORT+="- ❌ No device feature XMLs found.\n\n"
           fi
 
-          # 3. BUILD.PROP SPOOFING & BLUR SHADERS
-          REPORT+="### 3. Build.prop Properties (Blur & Priv-App)\n"
-          BLUR_PROP=$(grep -h "surface_flinger.supports_background_blur" $(find tree -name "build.prop") || echo "NOT FOUND")
-          LITE_PROP=$(grep -h "ro.miui.ui.version.lite" $(find tree -name "build.prop") || echo "NOT FOUND")
-          PRIV_PROP=$(grep -h "ro.control_privapp_permissions" $(find tree -name "build.prop") || echo "NOT FOUND")
-          BRAND_PROP=$(grep -h "ro.product.brand" $(find tree/system -name "build.prop" | head -1) || echo "NOT FOUND")
+          # 3. BUILD.PROP PROPERTIES
+          REPORT+="### 3. Build Properties (Blur & Priv-App)\n"
+          BLUR_PROP=$(grep -h "surface_flinger.supports_background_blur" $(find tree -name "build.prop") 2>/dev/null || echo "NOT FOUND")
+          LITE_PROP=$(grep -h "ro.miui.ui.version.lite" $(find tree -name "build.prop") 2>/dev/null || echo "NOT FOUND")
+          PRIV_PROP=$(grep -h "ro.control_privapp_permissions" $(find tree -name "build.prop") 2>/dev/null || echo "NOT FOUND")
+          BRAND_PROP=$(grep -h "^ro.product.brand=" $(find tree/system -name "build.prop" 2>/dev/null | head -1) || echo "NOT FOUND")
           
           REPORT+="- \`ro.surface_flinger.supports_background_blur\`: **$BLUR_PROP**\n"
           REPORT+="- \`ro.miui.ui.version.lite\`: **$LITE_PROP**\n"
           REPORT+="- \`ro.control_privapp_permissions\`: **$PRIV_PROP**\n"
           REPORT+="- \`ro.product.brand\` (System): **$BRAND_PROP**\n\n"
 
-          # 4. INSTALLED LAUNCHERS & APPS
+          # 4. INSTALLED APPS
           REPORT+="### 4. App Directory Analysis\n"
           MIUI_HOME=$(find tree -type d -iname "MiuiHome" 2>/dev/null || true)
           POCO_HOME=$(find tree -type d -iname "PocoHome" 2>/dev/null || true)
@@ -176,7 +175,6 @@ jobs:
           
           [ -n "$MIUI_HOME" ] && REPORT+="- ✅ **MiuiHome** found at \`$MIUI_HOME\`\n" || REPORT+="- ❌ MiuiHome missing\n"
           [ -n "$POCO_HOME" ] && REPORT+="- ✅ **PocoHome** found at \`$POCO_HOME\`\n" || REPORT+="- ❌ PocoHome missing\n"
-          [ -n "$SEC_CENTER" ] && REPORT+="- ✅ **SecurityCenter** found at \`$SEC_CENTER\`\n"
+          [ -n "$SEC_CENTER" ] && REPORT+="- ✅ **SecurityCenter** found at \`$SEC_CENTER\`\n" || REPORT+="- ❌ SecurityCenter missing\n"
 
-          # Write report to GitHub Actions Summary
-          echo -e "$REPORT" >> $GITHUB_STEP_SUMMARY
+          echo -e "$REPORT" >> "$GITHUB_STEP_SUMMARY"
