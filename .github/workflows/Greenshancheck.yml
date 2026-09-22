@@ -23,18 +23,24 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      - name: "🧹 Install Audit Toolchain"
+      - name: "🧹 Install Audit Toolchain (Fixed Repositories)"
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y erofs-utils android-sdk-libsparse-utils brotli wget unzip jq python3 curl default-jdk
           
-          # Install lpunpack for dynamic partitions
-          wget -q -O lpunpack https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpunpack
+          echo "Downloading lpunpack..."
+          # Primary: Compiled C++ binary mirror. Fallback: Stable Python implementation.
+          if ! curl -sL --fail --show-error -o lpunpack https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/Linux-debian/binary/lpunpack; then
+            echo "Binary mirror failed. Falling back to Python implementation..."
+            curl -sL --fail --show-error -o lpunpack https://raw.githubusercontent.com/unix3dgforce/lpunpack/master/lpunpack.py
+          fi
           chmod +x lpunpack
           sudo mv lpunpack /usr/local/bin/
 
-          # Install Apktool for services.jar decompilation
-          wget -q -O apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
+          echo "Downloading Apktool..."
+          # Official Bitbucket Server
+          curl -sL --fail --show-error -o apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.10.0.jar
           sudo mv apktool.jar /usr/local/bin/
 
       - name: "📥 Download & Extract Greeshan Repack"
@@ -46,7 +52,7 @@ jobs:
           curl -L --fail --retry 3 -o greeshan_rom.zip "$ROM_URL"
           
           echo "Verifying downloaded archive..."
-          file greeshan_rom.zip | grep -qi "Zip archive" || { echo "::error::SourceForge mirror returned an invalid file/HTML page."; exit 1; }
+          file greeshan_rom.zip | grep -qi "Zip archive" || { echo "::error::SourceForge mirror returned an invalid file. Check the ROM_URL."; exit 1; }
           
           echo "Unzipping archive..."
           unzip -q greeshan_rom.zip -d audit_workspace/extracted/
@@ -76,7 +82,7 @@ jobs:
                   echo "Found brotli compressed $part. Decompressing..."
                   brotli -d "$part.new.dat.br" -o "$part.new.dat"
                   
-                  wget -q https://raw.githubusercontent.com/xpirt/sdat2img/master/sdat2img.py
+                  curl -sL --fail --show-error -o sdat2img.py https://raw.githubusercontent.com/xpirt/sdat2img/master/sdat2img.py
                   python3 sdat2img.py "$part.transfer.list" "$part.new.dat" "$part.img"
                   rm -f "$part.new.dat" "$part.transfer.list" "$part.new.dat.br"
               fi
