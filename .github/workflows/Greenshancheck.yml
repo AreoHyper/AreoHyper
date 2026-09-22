@@ -23,14 +23,21 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      - name: "🧹 Install Audit Toolchain (Fixed Repositories)"
+      - name: "☕ Setup Java (Bypasses dpkg crash)"
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: "🧹 Install Audit Toolchain (Fixed)"
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y erofs-utils android-sdk-libsparse-utils brotli wget unzip jq python3 curl default-jdk
+          
+          # Removed default-jdk to prevent the dpkg exit code 100 crash
+          sudo apt-get install -y erofs-utils android-sdk-libsparse-utils brotli wget unzip jq python3 curl
           
           echo "Downloading lpunpack..."
-          # Primary: Compiled C++ binary mirror. Fallback: Stable Python implementation.
           if ! curl -sL --fail --show-error -o lpunpack https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/Linux-debian/binary/lpunpack; then
             echo "Binary mirror failed. Falling back to Python implementation..."
             curl -sL --fail --show-error -o lpunpack https://raw.githubusercontent.com/unix3dgforce/lpunpack/master/lpunpack.py
@@ -39,7 +46,6 @@ jobs:
           sudo mv lpunpack /usr/local/bin/
 
           echo "Downloading Apktool..."
-          # Official Bitbucket Server
           curl -sL --fail --show-error -o apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.10.0.jar
           sudo mv apktool.jar /usr/local/bin/
 
