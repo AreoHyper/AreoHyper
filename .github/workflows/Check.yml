@@ -1,49 +1,75 @@
-name: Get Super Partition Size
+name: Get Real Super Partition Size (from LP Metadata)
 
 on:
-  workflow_dispatch: # Allows you to run this manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
   get-size:
     runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
 
+    steps:
       - name: Download Fastboot ROM
         run: |
           echo "Downloading ROM..."
-          wget -O rom.tgz "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS2.0.208.0.VGQINXM/air_in_global_images_OS2.0.208.0.VGQINXM_20260804.0000.00_15.0_in_35b733efaa.tgz"
+          wget -q -O rom.tgz "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS2.0.208.0.VGQINXM/air_in_global_images_OS2.0.208.0.VGQINXM_20260804.0000.00_15.0_in_35b733efaa.tgz"
 
       - name: Extract ROM
         run: |
           echo "Extracting tar file..."
           mkdir -p extracted_rom
-          tar -xvf rom.tgz -C extracted_rom --strip-components=1 || tar -xvf rom.tgz -C extracted_rom
+          tar -xf rom.tgz -C extracted_rom --strip-components=1 || tar -xf rom.tgz -C extracted_rom
+          rm -f rom.tgz
 
-      - name: Find and Measure Super Partition
+      - name: Install tools
         run: |
-          echo "Searching for super.img..."
+          sudo apt-get update
+          sudo apt-get install -y android-sdk-libsparse-utils file
+          wget -q -O lpdump https://github.com/unix3m/lpunpack_and_lpmake/raw/master/bin/lpdump
+          chmod +x lpdump
+          sudo mv lpdump /usr/local/bin/
+
+      - name: Read actual super partition size from LP metadata
+        run: |
+          set -euo pipefail
+
           SUPER_PATH=$(find extracted_rom -name "super.img" -print -quit)
-          
           if [ -z "$SUPER_PATH" ]; then
-            echo "Error: super.img not found in the extracted files!"
+            echo "::error::super.img not found in the extracted ROM!"
             exit 1
           fi
-          
           echo "Found super.img at: $SUPER_PATH"
-          
-          # Get file size in bytes
-          SIZE_BYTES=$(stat -c%s "$SUPER_PATH")
-          
-          # Get file size in human-readable format (MB/GB)
-          SIZE_HUMAN=$(du -h "$SUPER_PATH" | cut -f1)
-          
+
+          # File size is NOT the real answer if the image is sparse — unsparse it first
+          if file "$SUPER_PATH" | grep -qi sparse; then
+            echo "Image is sparse — converting to raw before reading metadata..."
+            simg2img "$SUPER_PATH" super_raw.img
+            READ_PATH="super_raw.img"
+          else
+            READ_PATH="$SUPER_PATH"
+          fi
+
+          echo "Raw file size (NOT what we want, shown for comparison): $(stat -c%s "$READ_PATH") bytes"
+
           echo "----------------------------------------"
-          echo "SUPER PARTITION SIZE (Bytes): $SIZE_BYTES"
-          echo "SUPER PARTITION SIZE (Human): $SIZE_HUMAN"
+          echo "Running lpdump on: $READ_PATH"
           echo "----------------------------------------"
-          
-          # Save size to GitHub environment output if needed by later steps
-          echo "SUPER_SIZE_BYTES=$SIZE_BYTES" >> $GITHUB_ENV
+          lpdump "$READ_PATH" | tee lpdump_output.txt
+
+          # Pull the real declared device size out of the metadata block
+          REAL_SIZE=$(grep -iE "Super partition size|Block device.*size" lpdump_output.txt | grep -oE '[0-9]+' | head -1)
+
+          if [ -z "$REAL_SIZE" ]; then
+            echo "::warning::Could not auto-parse the size — check lpdump_output.txt manually below."
+          else
+            echo "----------------------------------------"
+            echo "ACTUAL DEVICE SUPER SIZE (bytes): $REAL_SIZE"
+            echo "Use this value for DEVICE_SUPER_SIZE_BYTES"
+            echo "----------------------------------------"
+            echo "SUPER_SIZE_BYTES=$REAL_SIZE" >> $GITHUB_ENV
+          fi
+
+      - name: Upload lpdump output as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lpdump-output
+          path: lpdump_output.txt
