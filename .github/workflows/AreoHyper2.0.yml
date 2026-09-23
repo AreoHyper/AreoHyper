@@ -238,7 +238,6 @@ jobs:
           sudo chown $USER:$USER ./services_temp.jar
           java -Xmx4G -jar /usr/local/bin/apktool.jar d -r -q ./services_temp.jar -o jar_workspace
 
-          # FIX: Abstract / Native method crash prevention
           python3 - << 'EOF'
           import os
 
@@ -260,7 +259,6 @@ jobs:
                       if line.startswith(".method"):
                           for method in TARGET_METHODS:
                               if f" {method}(" in line:
-                                  # EXPLICITLY SKIP ABSTRACT OR NATIVE DECLARATIONS TO PREVENT VERIFIER CRASHES
                                   if " abstract " in line or " native " in line:
                                       print(f"Safely bypassing abstract/native declaration: {method} in {fname}")
                                       break
@@ -479,46 +477,40 @@ jobs:
       - name: "📦 Compress Distribution ZIP"
         run: |
           cd package_root
+          # Standard ZIP compression (No splitting)
           zip -r -9 ../AeroHyper_2.0_Greeshan_Hybrid_Fastboot.zip ./*
-          echo "RELEASE_TAG=AeroHyper-FinalMaster-${{ github.run_number }}" >> $GITHUB_ENV
 
-      - name: "☁️ Upload to GoFile"
+      - name: "💾 Upload to GitHub Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: AeroHyper_2.0_Greeshan_Hybrid_Fastboot
+          path: AeroHyper_2.0_Greeshan_Hybrid_Fastboot.zip
+          compression-level: 0 # File is already zipped, no need to compress twice
+
+      - name: "☁️ Upload to GoFile (With Diagnostic Logging)"
         id: upload
         continue-on-error: true
         run: |
           SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name' || echo "")
           if [ -n "$SERVER" ] && [ "$SERVER" != "null" ]; then
+            echo "Attempting to upload to GoFile server: $SERVER..."
+            
+            # Execute upload and capture the full raw response for debugging
             UPLOAD_RESPONSE=$(curl -s -F file=@AeroHyper_2.0_Greeshan_Hybrid_Fastboot.zip https://${SERVER}.gofile.io/contents/uploadfile)
+            
+            echo "--- RAW GOFILE API RESPONSE ---"
+            echo "$UPLOAD_RESPONSE"
+            echo "-------------------------------"
+            
+            # Attempt to extract the download link from the JSON response
             GOFILE_LINK=$(echo "$UPLOAD_RESPONSE" | jq -r '.data.downloadPage' || echo "")
+            
             if [ -n "$GOFILE_LINK" ] && [ "$GOFILE_LINK" != "null" ]; then
-              echo "GOFILE_LINK=$GOFILE_LINK" >> $GITHUB_ENV
+              echo "✅ Success! Download Link: $GOFILE_LINK"
             else
-              echo "Gofile link generation failed."
+              echo "❌ GoFile upload completed, but the API did not return a valid download link."
+              echo "Check the RAW GOFILE API RESPONSE above to see why the server rejected or timed out the file."
             fi
           else
-            echo "Failed to contact Gofile API."
+            echo "❌ Failed to contact GoFile API to retrieve an active server."
           fi
-
-      - name: "🚀 Publish Notes to GitHub Releases"
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: "AeroHyper 2.0 (Greeshan Flagship Hybrid - A15 Final Master Edition)"
-          files: AeroHyper_2.0_Greeshan_Hybrid_Fastboot.zip
-          body: |
-            ## 🚀 AeroHyper 2.0 - A15 Final Master Edition
-            *   **Watermark:** Project AeroHyper - Yash
-            *   **Target Devices:** Redmi 13C 5G / POCO M6 5G (`air` unified MediaTek tree, Android 15 Base).
-            *   **GoFile Mirror:** ${{ env.GOFILE_LINK || 'Upload to GoFile bypassed due to API limits. Download ZIP directly from Assets below.' }}
-            *   **Anti-OTA Shield:** Stock Updater engines physically deleted to permanently block Xiaomi server overwrites.
-            *   **A15 VAB Kernel Safeguard:** Integrated `--virtual-ab` compiler flags to prevent Android 15 Boot Control HAL loop panics.
-            *   **FastbootD Transition:** Flash script automatically boots into userspace `fastbootd` before super image flash to prevent `Size too large` MTK limits.
-            *   **ENG Preloader Safety:** Flash script explicitly skips `preloader*.img` to protect the MediaTek SLA/DA backdoor.
-            *   **Gaussian Blur & Low-RAM Spoofing:** Real-time GPU background blur enabled via SurfaceFlinger and `low_ram=false` framework spoof.
-            *   **Floating Windows & Split Screen:** Native XML unlocked to restore fully unrestricted multitasking.
-            *   **Lock Screen Engine:** Unlocked Magazine customizer and Depth Effect engine via modded AOD and `support_aod` integration.
-            *   **Anti-Bootloop Integrity:** Single-target Priv-App injection prevents `DuplicatePackageException` and purges A15 `.prof`/`.bprof` ART Caches.
-            *   **System-as-Root SELinux Alignment:** Root-level EROFS mapping with exact UNIX permissions eliminates context mismatch panics.
-            *   **Core Security Patch:** Hardened Type-safe Smali byte-patch applied to `com.android.server.pm` resolving `fsverity` mismatches.
-          draft: false
-          prerelease: false
