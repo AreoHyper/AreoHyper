@@ -220,7 +220,7 @@ jobs:
             sudo bash -c "echo 'persist.sys.background_blur_status_default=true' >> $prop"
           done
 
-      - name: "🔓 Precision Core Signature Patch (A15)"
+      - name: "🔓 Precision Core Signature Patch (A15 Safe-Mode)"
         run: |
           set -euo pipefail
           cd build_workspace
@@ -238,6 +238,7 @@ jobs:
           sudo chown $USER:$USER ./services_temp.jar
           java -Xmx4G -jar /usr/local/bin/apktool.jar d -r -q ./services_temp.jar -o jar_workspace
 
+          # FIX: Abstract / Native method crash prevention
           python3 - << 'EOF'
           import os
 
@@ -259,6 +260,11 @@ jobs:
                       if line.startswith(".method"):
                           for method in TARGET_METHODS:
                               if f" {method}(" in line:
+                                  # EXPLICITLY SKIP ABSTRACT OR NATIVE DECLARATIONS TO PREVENT VERIFIER CRASHES
+                                  if " abstract " in line or " native " in line:
+                                      print(f"Safely bypassing abstract/native declaration: {method} in {fname}")
+                                      break
+                                      
                                   in_target = True
                                   ret_type = line.strip()[-1]
                                   out_lines.append(line)
