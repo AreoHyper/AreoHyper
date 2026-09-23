@@ -14,7 +14,6 @@ jobs:
     steps:
       - name: "💾 Free Massive Disk Space (Safe Cleanup)"
         run: |
-          # Safely frees ~30GB of space without shrinking the root partition
           echo "Freeing up disk space..."
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
@@ -30,11 +29,12 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: "🧹 Install Audit Toolchain (Includes AAPT)"
+      - name: "🧹 Install Audit Toolchain (Includes AAPT & Aria2)"
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y erofs-utils android-sdk-libsparse-utils brotli wget unzip jq python3 curl aapt
+          # Added aria2 to handle massive ROM downloads without dropping connections
+          sudo apt-get install -y erofs-utils android-sdk-libsparse-utils brotli wget unzip jq python3 curl aapt aria2
           
           echo "Downloading lpunpack..."
           if ! curl -sL --fail --show-error -o lpunpack https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/Linux-debian/binary/lpunpack; then
@@ -60,8 +60,9 @@ jobs:
           set -euo pipefail
           cd audit_workspace
           
-          echo "Downloading Greeshan Repack..."
-          curl -L --fail --retry 3 -o greeshan_rom.zip "$ROM_URL"
+          echo "Downloading Greeshan Repack using multi-threaded Aria2..."
+          # Uses 16 simultaneous connections and auto-resumes to prevent Exit Code 18
+          aria2c -x 16 -s 16 -k 1M --continue=true --auto-file-renaming=false -d . -o greeshan_rom.zip "$ROM_URL"
           
           echo "Unzipping archive..."
           unzip -q greeshan_rom.zip -d extracted/
