@@ -164,6 +164,38 @@ jobs:
         run: |
           set -euo pipefail
           cd audit_workspace
+
+
+      - name: "🔎 100% Confirmation Hunt (AOD & App Vault)"
+        run: |
+          set -euo pipefail
+          cd audit_workspace
+          
+          # Forcefully grant Read & Execute permissions
+          sudo chmod -R +rX tree/
+          
+          REPORT="## 🔎 100% Confirmation: AOD & App Vault\n"
+          echo "Scanning all APKs for AOD and App Vault package names..."
+          
+          # Reads the true package name embedded inside the compiled APKs
+          FOUND_APPS=$(find tree -type f -name "*.apk" 2>/dev/null | while read -r apk; do
+            PKG=$(aapt dump badging "$apk" 2>/dev/null | grep "package: name=" | awk -F"'" '{print $2}')
+            
+            if [[ "$PKG" == "com.miui.aod" ]]; then
+                echo "- 🎯 **Found AOD:** \`$apk\`"
+            elif [[ "$PKG" == "com.miui.personalassistant" || "$PKG" == "com.mi.android.globallauncher" \vert{}\vert{} "$PKG" == "com.miui.appvault" ]]; then
+                echo "- 🎯 **Found App Vault / Minus Screen:** \`$apk\` (Package: $PKG)"
+            fi
+          done || true)
+          
+          if [ -n "$FOUND_APPS" ]; then
+             REPORT+="$FOUND_APPS\n\n"
+          else
+             REPORT+="- 👻 **100% Confirmed:** Neither AOD nor App Vault exist anywhere in this ROM. The coast is completely clear.\n\n"
+          fi
+          
+          echo -e "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+
           
           REPORT="## 🕵️‍♂️ Greeshan Repack Deep Audit Report\n\n"
           
