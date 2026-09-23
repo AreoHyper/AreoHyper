@@ -150,7 +150,7 @@ jobs:
             sudo chown -R root:root "$1"
           }
 
-          PROD_CTX=$(find tree/product -name "product_file_contexts" | head -1 || echo "")
+          PROD_CTX=$(sudo find tree/product -name "product_file_contexts" 2>/dev/null | head -1 || echo "")
 
           if [ -f "../mods_extracted/launcher/files/MiuiHome.apk" ]; then
             sudo mkdir -p tree/product/priv-app/MiuiHome
@@ -202,8 +202,8 @@ jobs:
           set -euo pipefail
           cd build_workspace
           
-          find tree -name "build.prop" -type f | while read -r prop; do
-            if grep -q "^ro.control_privapp_permissions=" "$prop"; then
+          sudo find tree -name "build.prop" -type f 2>/dev/null | while read -r prop; do
+            if sudo grep -q "^ro.control_privapp_permissions=" "$prop"; then
               sudo sed -i 's/^ro.control_privapp_permissions=.*/ro.control_privapp_permissions=log/' "$prop"
             else
               sudo bash -c "echo 'ro.control_privapp_permissions=log' >> $prop"
@@ -228,7 +228,7 @@ jobs:
           echo "Purging precompiled ART binaries for framework..."
           sudo find tree/system -type f \( -name "services.odex" -o -name "services.vdex" -o -name "services.art" -o -name "services.jar.prof" \) -delete 2>/dev/null || true
 
-          SERVICES_PATH=$(find tree/system -name "services.jar" | head -1 || true)
+          SERVICES_PATH=$(sudo find tree/system -name "services.jar" 2>/dev/null | head -1 || true)
           if [ -z "$SERVICES_PATH" ]; then
             echo "::error::services.jar not found! Cannot apply core signature bypass."
             exit 1
@@ -360,13 +360,12 @@ jobs:
           cd build_workspace
           mkdir -p output
 
-          SYS_CTX=$(find tree/system -name "plat_file_contexts" | head -1 || echo "")
-          PROD_CTX=$(find tree/product -name "product_file_contexts" | head -1 || echo "")
-          EXT_CTX=$(find tree/system_ext -name "system_ext_file_contexts" | head -1 || echo "")
-          MI_EXT_CTX=$(find tree/mi_ext -name "mi_ext_file_contexts" | head -1 || echo "")
-          VENDOR_CTX=$(find tree/vendor -name "vendor_file_contexts" | head -1 || echo "")
+          SYS_CTX=$(sudo find tree/system -name "plat_file_contexts" 2>/dev/null | head -1 || echo "")
+          PROD_CTX=$(sudo find tree/product -name "product_file_contexts" 2>/dev/null | head -1 || echo "")
+          EXT_CTX=$(sudo find tree/system_ext -name "system_ext_file_contexts" 2>/dev/null | head -1 || echo "")
+          MI_EXT_CTX=$(sudo find tree/mi_ext -name "mi_ext_file_contexts" 2>/dev/null | head -1 || echo "")
+          VENDOR_CTX=$(sudo find tree/vendor -name "vendor_file_contexts" 2>/dev/null | head -1 || echo "")
 
-          # CRITICAL FIX: Removed --force-uid=0 --force-gid=0 which caused system-wide permission kernel panics
           [ -n "$SYS_CTX" ] && sudo mkfs.erofs -x1 -zlz4hc,9 --mount-point=/system --file-contexts="$SYS_CTX" output/system.img tree/system
           [ -n "$PROD_CTX" ] && sudo mkfs.erofs -x1 -zlz4hc,9 --mount-point=/product --file-contexts="$PROD_CTX" output/product.img tree/product
           [ -n "$EXT_CTX" ] && sudo mkfs.erofs -x1 -zlz4hc,9 --mount-point=/system_ext --file-contexts="$EXT_CTX" output/system_ext.img tree/system_ext
@@ -400,7 +399,6 @@ jobs:
                   total_size += size
                   lpmake_cmd.extend(["--partition", f"{p_name}:readonly:{size}:{group_name}", "--image", f"{p_name}={src_img}"])
 
-          # Safe clamping to prevent super partition overflow
           group_size = total_size + 104857600
           if group_size > (super_size - 1048576):
               group_size = super_size - 1048576
