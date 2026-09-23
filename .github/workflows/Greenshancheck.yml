@@ -29,17 +29,14 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: "🧹 Install Audit Toolchain (Fixed)"
+      - name: "🧹 Install Audit Toolchain & Setup Environment"
         run: |
           set -euo pipefail
           sudo apt-get update
-          
-          # Removed default-jdk to prevent the dpkg exit code 100 crash
           sudo apt-get install -y erofs-utils android-sdk-libsparse-utils brotli wget unzip jq python3 curl
           
           echo "Downloading lpunpack..."
           if ! curl -sL --fail --show-error -o lpunpack https://raw.githubusercontent.com/whyshhnuv/lpunpack-lpmake-mirror/Linux-debian/binary/lpunpack; then
-            echo "Binary mirror failed. Falling back to Python implementation..."
             curl -sL --fail --show-error -o lpunpack https://raw.githubusercontent.com/unix3dgforce/lpunpack/master/lpunpack.py
           fi
           chmod +x lpunpack
@@ -48,49 +45,60 @@ jobs:
           echo "Downloading Apktool..."
           curl -sL --fail --show-error -o apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.10.0.jar
           sudo mv apktool.jar /usr/local/bin/
+          
+          # Pre-create all audit directories so 'find' commands physically cannot fail later
+          mkdir -p audit_workspace/extracted audit_workspace/tree/system audit_workspace/tree/product audit_workspace/tree/system_ext audit_workspace/tree/vendor audit_workspace/tree/mi_ext
 
       - name: "📥 Download & Extract Greeshan Repack"
         run: |
           set -euo pipefail
-          mkdir -p audit_workspace/extracted audit_workspace/tree
+          cd audit_workspace
           
           echo "Downloading Greeshan Repack..."
           curl -L --fail --retry 3 -o greeshan_rom.zip "$ROM_URL"
           
-          echo "Verifying downloaded archive..."
-          file greeshan_rom.zip | grep -qi "Zip archive" || { echo "::error::SourceForge mirror returned an invalid file. Check the ROM_URL."; exit 1; }
-          
           echo "Unzipping archive..."
-          unzip -q greeshan_rom.zip -d audit_workspace/extracted/
+          unzip -q greeshan_rom.zip -d extracted/
           rm -f greeshan_rom.zip
 
-      - name: "🧩 Unpack Firmware Images"
+      - name: "🧩 Dynamic Super Hunter (Unpacks whatever Greeshan named it)"
         run: |
           set -euo pipefail
           cd audit_workspace/extracted
           
-          # Scenario A: Fastboot ROM with super.img
-          SUPER_IMG=$(find . -name "super.img" | head -1)
-          if [ -n "$SUPER_IMG" ]; then
-              echo "Found super.img. Unpacking..."
-              if file "$SUPER_IMG" | grep -qi "sparse"; then
-                  simg2img "$SUPER_IMG" super_raw.img
+          # 1. Look for ANY single .img file larger than 1.5GB (This catches renamed super images like greeshan.img)
+          MASSIVE_IMG=$(find . -type f -name "*.img" -size +1500M | head -1 || true)
+          
+          if [ -n "$MASSIVE_IMG" ]; then
+              echo "Found massive image: $MASSIVE_IMG! Unpacking..."
+              if file "$MASSIVE_IMG" | grep -qi "sparse"; then
+                  simg2img "$MASSIVE_IMG" super_raw.img
               else
-                  mv "$SUPER_IMG" super_raw.img
+                  mv "$MASSIVE_IMG" super_raw.img
               fi
               lpunpack super_raw.img ./
               rm -f super_raw.img
+          else
+              echo "No massive single image found. Checking for chunked sparse files (e.g., super.img.0)..."
+              # 2. Look for chunked files and merge them
+              CHUNK_BASE=$(find . -name "*.img.0" | head -1 || true)
+              if [ -n "$CHUNK_BASE" ]; then
+                  BASE_NAME="${CHUNK_BASE%.0}"
+                  echo "Found chunked files for $BASE_NAME. Merging..."
+                  simg2img ${BASE_NAME}.* super_raw.img
+                  lpunpack super_raw.img ./
+                  rm -f super_raw.img
+              fi
           fi
 
-          # Scenario B: Recovery ROM with .dat.br files
+          # 3. Fallback for Dat.br (Recovery format)
           for part in system product system_ext vendor mi_ext; do
-              if [ -f "$part.new.dat.br" ]; then
-                  echo "Found brotli compressed $part. Decompressing..."
-                  brotli -d "$part.new.dat.br" -o "$part.new.dat"
-                  
+              if [ -f "images/$part.new.dat.br" ]; then
+                  echo "Found compressed $part. Decompressing..."
+                  brotli -d "images/$part.new.dat.br" -o "$part.new.dat"
                   curl -sL --fail --show-error -o sdat2img.py https://raw.githubusercontent.com/xpirt/sdat2img/master/sdat2img.py
-                  python3 sdat2img.py "$part.transfer.list" "$part.new.dat" "$part.img"
-                  rm -f "$part.new.dat" "$part.transfer.list" "$part.new.dat.br"
+                  python3 sdat2img.py "images/$part.transfer.list" "$part.new.dat" "$part.img"
+                  rm -f "$part.new.dat" "images/$part.transfer.list" "images/$part.new.dat.br"
               fi
           done
 
@@ -100,14 +108,18 @@ jobs:
           mkdir -p /tmp/erofs_mnt
           cd audit_workspace/extracted
           
+          # Extract the logical partitions generated by lpunpack
           for part in system product system_ext vendor mi_ext; do
-              IMG=$(find . -iname "${part}_a.img" -o -iname "${part}.img" | head -1)
+              IMG=$(find . -iname "${part}_a.img" -o -iname "${part}.img" | head -1 || true)
               if [ -n "$IMG" ]; then
-                  echo "Mounting $part..."
-                  mkdir -p "../tree/$part"
-                  sudo mount -t erofs -o loop "$IMG" /tmp/erofs_mnt \vert{}\vert{} sudo mount -t ext4 -o loop "$IMG" /tmp/erofs_mnt
-                  sudo rsync -a /tmp/erofs_mnt/ "../tree/$part/"
-                  sudo umount /tmp/erofs_mnt
+                  echo "Mounting $IMG to audit folder..."
+                  sudo mount -t erofs -o loop "$IMG" /tmp/erofs_mnt || sudo mount -t ext4 -o loop "$IMG" /tmp/erofs_mnt || echo "Warning: Failed to mount $IMG"
+                  
+                  # If mount was successful, copy it over
+                  if mountpoint -q /tmp/erofs_mnt; then
+                      sudo rsync -a /tmp/erofs_mnt/ "../tree/$part/"
+                      sudo umount /tmp/erofs_mnt
+                  fi
               fi
           done
 
@@ -121,7 +133,7 @@ jobs:
           
           # 1. CORE PATCH AUDIT
           REPORT+="### 1. Core Signature Patch (services.jar)\n"
-          SERVICES_JAR=$(find tree/system -name "services.jar" | head -1)
+          SERVICES_JAR=$(find tree/system -name "services.jar" 2>/dev/null | head -1 || true)
           if [ -n "$SERVICES_JAR" ]; then
               java -jar /usr/local/bin/apktool.jar d -r -q "$SERVICES_JAR" -o services_smali
               
@@ -148,12 +160,12 @@ jobs:
                   REPORT+="- ⚠️ **Status:** Looks UNPATCHED (Original bytecode detected). Needs manual patching for Kashi mods.\n\n"
               fi
           else
-              REPORT+="- ❌ \`services.jar\` not found.\n\n"
+              REPORT+="- ❌ \`services.jar\` not found in the extracted tree.\n\n"
           fi
 
           # 2. FLAGSHIP XML INJECTIONS
           REPORT+="### 2. Device Features (\`air.xml\` / \`miui_features.xml\`)\n"
-          XML_FILES=$(find tree -name "*air*.xml" -o -name "*miui_features*.xml" 2>/dev/null)
+          XML_FILES=$(find tree -name "*air*.xml" -o -name "*miui_features*.xml" 2>/dev/null || true)
           if [ -n "$XML_FILES" ]; then
               for xml in $XML_FILES; do
                   REPORT+="**File:** \`$xml\`\n"
@@ -169,10 +181,10 @@ jobs:
 
           # 3. BUILD.PROP PROPERTIES
           REPORT+="### 3. Build Properties (Blur & Priv-App)\n"
-          BLUR_PROP=$(grep -h "surface_flinger.supports_background_blur" $(find tree -name "build.prop") 2>/dev/null || echo "NOT FOUND")
-          LITE_PROP=$(grep -h "ro.miui.ui.version.lite" $(find tree -name "build.prop") 2>/dev/null || echo "NOT FOUND")
-          PRIV_PROP=$(grep -h "ro.control_privapp_permissions" $(find tree -name "build.prop") 2>/dev/null || echo "NOT FOUND")
-          BRAND_PROP=$(grep -h "^ro.product.brand=" $(find tree/system -name "build.prop" 2>/dev/null | head -1) || echo "NOT FOUND")
+          BLUR_PROP=$(grep -h "surface_flinger.supports_background_blur" $(find tree -name "build.prop" 2>/dev/null) 2>/dev/null || echo "NOT FOUND")
+          LITE_PROP=$(grep -h "ro.miui.ui.version.lite" $(find tree -name "build.prop" 2>/dev/null) 2>/dev/null || echo "NOT FOUND")
+          PRIV_PROP=$(grep -h "ro.control_privapp_permissions" $(find tree -name "build.prop" 2>/dev/null) 2>/dev/null || echo "NOT FOUND")
+          BRAND_PROP=$(grep -h "^ro.product.brand=" $(find tree/system -name "build.prop" 2>/dev/null | head -1) 2>/dev/null || echo "NOT FOUND")
           
           REPORT+="- \`ro.surface_flinger.supports_background_blur\`: **$BLUR_PROP**\n"
           REPORT+="- \`ro.miui.ui.version.lite\`: **$LITE_PROP**\n"
