@@ -33,7 +33,6 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          # Added aapt to physically read compiled AndroidManifest.xml files
           sudo apt-get install -y erofs-utils android-sdk-libsparse-utils brotli wget unzip jq python3 curl aapt
           
           echo "Downloading lpunpack..."
@@ -130,10 +129,12 @@ jobs:
               fi
           done
 
-            - name: "🔎 Dynamic Launcher Hunt (Finds any renamed Launcher)"
-         run: |
+      - name: "🔎 Dynamic Launcher Hunt (Finds any renamed Launcher)"
+        run: |
           set -euo pipefail
           cd audit_workspace
+          
+          # Project AeroHyper - Watermark: Yash
           
           # Forcefully grant Read & Execute permissions to the runner so it can scan system folders
           sudo chmod -R +rX tree/
@@ -157,7 +158,6 @@ jobs:
           fi
           
           echo -e "$REPORT" >> "$GITHUB_STEP_SUMMARY"
-
 
       - name: "🕵️‍♂️ Execute Deep Audit"
         id: audit
