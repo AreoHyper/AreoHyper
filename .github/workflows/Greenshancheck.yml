@@ -130,22 +130,25 @@ jobs:
               fi
           done
 
-      - name: "🔎 Dynamic Launcher Hunt (Finds any renamed Launcher)"
-        run: |
+            - name: "🔎 Dynamic Launcher Hunt (Finds any renamed Launcher)"
+         run: |
           set -euo pipefail
           cd audit_workspace
+          
+          # Forcefully grant Read & Execute permissions to the runner so it can scan system folders
+          sudo chmod -R +rX tree/
           
           REPORT="## 🔎 Dynamic Launcher Hunt\n"
           REPORT+="Scanned all APKs for \`android.intent.category.HOME\`:\n\n"
           
           echo "Scanning all APKs for Home category..."
           
-          # Find every APK and grep its internal manifest for the Home Screen intent
-          FOUND_LAUNCHERS=$(find tree -type f -name "*.apk" | while read -r apk; do
+          # Added a failsafe (|| true) to prevent pipefail crashes if a broken symlink is found
+          FOUND_LAUNCHERS=$(find tree -type f -name "*.apk" 2>/dev/null | while read -r apk; do
             if aapt dump xmltree "$apk" AndroidManifest.xml 2>/dev/null | grep -q "android.intent.category.HOME"; then
                 echo "- 🎯 **Found Launcher:** \`$apk\`"
             fi
-          done)
+          done || true)
           
           if [ -n "$FOUND_LAUNCHERS" ]; then
              REPORT+="$FOUND_LAUNCHERS\n\n"
@@ -154,6 +157,7 @@ jobs:
           fi
           
           echo -e "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+
 
       - name: "🕵️‍♂️ Execute Deep Audit"
         id: audit
