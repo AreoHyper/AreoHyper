@@ -1,4 +1,4 @@
-name: 🚀 Build AeroHyper 2.0 (A15 Flagship Hybrid - Final Master)
+name: 🚀 Build AeroHyper 
 
 on:
   workflow_dispatch:
