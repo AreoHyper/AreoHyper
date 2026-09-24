@@ -1,4 +1,4 @@
-name: 🚀 Build AeroHyper 
+name: 🚀 Build HyperAreo 
 
 on:
   workflow_dispatch:
@@ -21,11 +21,11 @@ permissions:
 
 jobs:
   build_package:
-    name: "Compile AeroHyper Hybrid"
+    name: "Compile HyperAreo Hybrid (A15 Final Master)"
     runs-on: ubuntu-24.04
             
     steps:
-      - name: "💾 Free Disk Space"
+      - name: "Free Disk Space"
         run: |
           echo "Purging build runner bloatware..."
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
@@ -33,7 +33,7 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: " Setup Java 17"
+      - name: "☕ Setup Java 17"
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -68,7 +68,7 @@ jobs:
           unzip -q greeshan_rom.zip -d extracted/
           rm -f greeshan_rom.zip
 
-      - name: "Firmware Extraction"
+      - name: "Dynamic Super Unpacker & Firmware Extraction"
         run: |
           set -euo pipefail
           cd build_workspace/extracted
@@ -98,6 +98,12 @@ jobs:
                   echo "Extracting $part via EROFS (Permissions Preserved)..."
                   sudo fsck.erofs --extract="../tree/$part" "$IMG" || \
                   (sudo mount -o loop "$IMG" /tmp/erofs_mnt && sudo rsync -aHAX /tmp/erofs_mnt/ "../tree/$part/" && sudo umount /tmp/erofs_mnt) || true
+                  
+                  # Failsafe: Abort if partition failed to extract to prevent 0-byte images
+                  if [ ! -d "../tree/$part" ] || [ -z "$(ls -A ../tree/$part 2>/dev/null)" ]; then
+                      echo "::error::Critical failure extracting $part partition. Halting build to prevent brick."
+                      exit 1
+                  fi
               fi
           done
 
@@ -120,7 +126,7 @@ jobs:
           set -euo pipefail
           cd build_workspace
           
-          echo "Watermark: Project AeroHyper - Yash"
+          echo "Watermark: Project HyperAreo - Yash"
           echo "Obliterating all stock, regional, renamed, and OTA Updater packages..."
           
           for target in "Updater" "MiuiUpdater" "XiaomiUpdater" \
@@ -197,18 +203,28 @@ jobs:
             [ -n "$PROD_CTX" ] && add_context "/product/app/AppVault" "$PROD_CTX"
           fi
 
-      - name: "🔧 Global Priv-App Bypass & Features"
+      - name: "Global Priv-App Bypass & HyperAreo Rebranding"
         run: |
           set -euo pipefail
           cd build_workspace
           
           sudo find tree -name "build.prop" -type f 2>/dev/null | while read -r prop; do
+            sudo bash -c "echo '' >> $prop"
+            
+            # --- Text Rebranding to HyperAreo 2.0 ---
+            sudo sed -i 's/^ro.build.display.id=.*/ro.build.display.id=HyperAreo 2.0/' "$prop"
+            sudo sed -i 's/^ro.build.version.incremental=.*/ro.build.version.incremental=HyperAreo-FinalMaster/' "$prop"
+            sudo sed -i 's/^ro.product.mod_device=.*/ro.product.mod_device=HyperAreo_air/' "$prop"
+            sudo sed -i 's/^ro.miui.ui.version.name=.*/ro.miui.ui.version.name=HyperAreo/' "$prop"
+            
+            # --- Priv-App Whitelist Bypass ---
             if sudo grep -q "^ro.control_privapp_permissions=" "$prop"; then
               sudo sed -i 's/^ro.control_privapp_permissions=.*/ro.control_privapp_permissions=log/' "$prop"
             else
               sudo bash -c "echo 'ro.control_privapp_permissions=log' >> $prop"
             fi
             
+            # --- Low RAM & Background Blur Overrides ---
             sudo sed -i '/^ro.config.low_ram=/d' "$prop"
             sudo bash -c "echo 'ro.config.low_ram=false' >> $prop"
             
@@ -220,7 +236,7 @@ jobs:
             sudo bash -c "echo 'persist.sys.background_blur_status_default=true' >> $prop"
           done
 
-      - name: "Signature Patch"
+      - name: "Precision Core Signature Patch"
         run: |
           set -euo pipefail
           cd build_workspace
@@ -358,7 +374,7 @@ jobs:
           sudo chmod 644 "$PIXEL_XML"
           sudo chown root:root "$PIXEL_XML"
 
-      - name: "Compile EROFS (A15 System-As-Root & VAB Aligned)"
+      - name: "Compile EROFS"
         run: |
           set -euo pipefail
           cd build_workspace
@@ -403,12 +419,15 @@ jobs:
                   total_size += size
                   lpmake_cmd.extend(["--partition", f"{p_name}:readonly:{size}:{group_name}", "--image", f"{p_name}={src_img}"])
 
+          # Hardened Group Size Clamp: Protects lpmake against overflowing the super partition. 15MB Overhead allowance.
           group_size = total_size + 104857600
-          if group_size > (super_size - 1048576):
-              group_size = super_size - 1048576
+          max_group_size = super_size - 15728640
+          
+          if group_size > max_group_size: 
+              group_size = max_group_size
 
-          if total_size > super_size:
-              print(f"Error: Physical size {total_size} exceeds capacity {super_size}")
+          if total_size > max_group_size:
+              print(f"Error: Total partition size ({total_size}) exceeds maximum physical capacity allowed for group ({max_group_size}). Debloat more apps!")
               sys.exit(1)
 
           lpmake_cmd.extend(["--group", f"{group_name}:{group_size}"])
@@ -417,7 +436,7 @@ jobs:
           subprocess.run(lpmake_cmd, check=True)
           EOF
 
-      - name: "Generate Safe Flash Script"
+      - name: "Generate Safe Dual-Slot Flash Script"
         run: |
           set -euo pipefail
           wget -q https://dl.google.com/android/repository/platform-tools-latest-windows.zip -O pt_win.zip
@@ -445,14 +464,23 @@ jobs:
               )
           )
           
-          echo Flashing Dynamic Firmware Core (Skipping Preloader for MTK Safety)...
+          echo ========================================================
+          echo Flashing Dynamic Firmware Core to BOTH Slots
+          echo (Skipping Preloader for MTK Safety)
+          echo ========================================================
           EOF
 
           for img in package_root/firmware-update/*.img; do
             [ -e "$img" ] || continue
             part=$(basename "$img" .img)
             if [[ "$part" != "super" && "$part" != vbmeta* && "$part" != "userdata" && "$part" != "preloader"* ]]; then
-                echo "if exist \"firmware-update\\$part.img\" \"%fastboot%\" flash $part \"firmware-update\\$part.img\"" >> package_root/windows_clean_install.bat
+                # Safe Batch Logic: Parses line-by-line without parenthetical blocks to prevent execution failures
+                echo "if not exist \"firmware-update\\$part.img\" goto skip_$part" >> package_root/windows_clean_install.bat
+                echo "echo Flashing $part..." >> package_root/windows_clean_install.bat
+                echo "\"%fastboot%\" flash ${part}_a \"firmware-update\\$part.img\" || \"%fastboot%\" flash ${part} \"firmware-update\\$part.img\"" >> package_root/windows_clean_install.bat
+                echo "\"%fastboot%\" flash ${part}_b \"firmware-update\\$part.img\" >nul 2>&1" >> package_root/windows_clean_install.bat
+                echo ":skip_$part" >> package_root/windows_clean_install.bat
+                echo "" >> package_root/windows_clean_install.bat
             fi
           done
 
@@ -466,10 +494,11 @@ jobs:
           echo Flashing Super Partition (This will take a few minutes)...
           "%fastboot%" flash super "firmware-update\super.img"
 
-          echo Performing Factory Wipe...
-          "%fastboot%" -w
+          echo Performing Factory Wipe (F2FS Safe)...
+          "%fastboot%" erase userdata
+          "%fastboot%" erase metadata
 
-          echo Rebooting to AeroHyper 2.0 A15 Final Master Edition!
+          echo Rebooting to HyperAreo 2.0 Final Master Edition!
           "%fastboot%" reboot
           pause
           EOF
@@ -477,17 +506,17 @@ jobs:
       - name: "Compress ZIP"
         run: |
           cd package_root
-          # Standard ZIP compression (No splitting)
-          zip -r -9 ../AeroHyper_2.0_Greeshan_Hybrid_Fastboot.zip ./*
+          # Standard ZIP compression
+          zip -r -9 ../HyperAreo_2.0_Greeshan_Hybrid_Fastboot.zip ./*
 
-      - name: "💾 Upload to GitHub Artifacts"
+      - name: "Upload to GitHub Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: AeroHyper_2.0_Greeshan_Hybrid_Fastboot
-          path: AeroHyper_2.0_Greeshan_Hybrid_Fastboot.zip
-          compression-level: 0 # File is already zipped, no need to compress twice
+          name: HyperAreo_2.0_Greeshan_Hybrid_Fastboot
+          path: HyperAreo_2.0_Greeshan_Hybrid_Fastboot.zip
+          compression-level: 0 # File is already zipped
 
-      - name: "Upload to GoFile"
+      - name: "☁️ Upload to GoFile (With Diagnostic Logging)"
         id: upload
         continue-on-error: true
         run: |
@@ -495,22 +524,20 @@ jobs:
           if [ -n "$SERVER" ] && [ "$SERVER" != "null" ]; then
             echo "Attempting to upload to GoFile server: $SERVER..."
             
-            # Execute upload and capture the full raw response for debugging
-            UPLOAD_RESPONSE=$(curl -s -F file=@AeroHyper_2.0_Greeshan_Hybrid_Fastboot.zip https://${SERVER}.gofile.io/contents/uploadfile)
+            UPLOAD_RESPONSE=$(curl -s -F file=@HyperAreo_2.0_Greeshan_Hybrid_Fastboot.zip https://${SERVER}.gofile.io/contents/uploadfile)
             
             echo "--- RAW GOFILE API RESPONSE ---"
             echo "$UPLOAD_RESPONSE"
             echo "-------------------------------"
             
-            # Attempt to extract the download link from the JSON response
             GOFILE_LINK=$(echo "$UPLOAD_RESPONSE" | jq -r '.data.downloadPage' || echo "")
             
             if [ -n "$GOFILE_LINK" ] && [ "$GOFILE_LINK" != "null" ]; then
               echo "✅ Success! Download Link: $GOFILE_LINK"
             else
               echo "❌ GoFile upload completed, but the API did not return a valid download link."
-              echo "Check the RAW GOFILE API RESPONSE above to see why the server rejected or timed out the file."
+              echo "Check the RAW GOFILE API RESPONSE above to see why the server rejected the file."
             fi
           else
-            echo "❌ Failed to contact GoFile API to retrieve an active server."
+            echo "❌ Failed to contact GoFile API."
           fi
