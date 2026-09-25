@@ -11,7 +11,7 @@ jobs:
       - name: Download Fastboot ROM
         run: |
           echo "Downloading ROM..."
-          wget -q -O rom.tgz "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS2.0.208.0.VGQINXM/air_in_global_images_OS2.0.208.0.VGQINXM_20260804.0000.00_15.0_in_35b733efaa.tgz"
+          wget -q -O rom.tgz "https://cdnorg.d.miui.com/OS3.0.309.0.WPOINXM/tornado_in_global_images_OS3.0.309.0.WPOINXM_20260908.0000.00_16.0_in_a3a27f403f.tgz"
 
       - name: Extract ROM
         run: |
