@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   build_package:
-    name: "Compile HyperAreo Hybrid (A15 Final Master)"
+    name: "Compile HyperAreo"
     runs-on: ubuntu-24.04
             
     steps:
